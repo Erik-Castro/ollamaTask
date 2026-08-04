@@ -1,0 +1,451 @@
+# ollamaTask
+
+A fluent, type-safe TypeScript client for [Ollama](https://ollama.com) that
+wraps the streaming chat API with support for **thinking models**, **tool
+calling**, **structured outputs**, and **WebStreams** — all built on the
+[ollama-js](https://github.com/ollama/ollama-js) SDK.
+
+## Features
+
+- **Fluent builder API** — chain `.system()`, `.user()`, `.tools()`,
+  `.format()`, etc.
+- **Thinking model support** — parses `<think>` tags and `message.thinking`
+  fields, routes them to a dedicated callback
+- **Tool calling pipeline** — automatic agentic loop: model calls tools →
+  handlers execute → results fed back → model continues
+- **Structured outputs** — constrain model responses to a JSON schema with
+  `.format()` + `.parse<T>()`
+- **WebStreams** — `toReadableStream()` returns a standard
+  `ReadableStream<StreamEvent>` for piping, teeing, or progressive consumption
+- **Callbacks** — `onThinking`, `onContent`, `onToolCall`, `onToolResult` for
+  full observability
+
+## Requirements
+
+- [Deno](https://deno.com) 2.x or Node.js 18+ with `npm:` specifier
+- [Ollama](https://ollama.com) running locally (default:
+  `http://127.0.0.1:11434`)
+
+## Setup
+
+```bash
+# Clone or copy ollamaTask.ts into your project
+# Add the ollama dependency
+deno add npm:ollama@^0.6.3
+```
+
+## Quick Start
+
+```ts
+import { ollamaTask } from "./ollamaTask.ts";
+
+const result = await new ollamaTask("qwen3.5:2b")
+  .system("You are a helpful assistant.")
+  .user("What is the capital of France?")
+  .execute();
+
+console.log(result.content);
+// "The capital of France is Paris."
+```
+
+## API Reference
+
+### Constructor
+
+```ts
+new ollamaTask(model: string)
+```
+
+| Param   | Type     | Description                                                         |
+| ------- | -------- | ------------------------------------------------------------------- |
+| `model` | `string` | Ollama model name (e.g. `"qwen3.5:2b"`, `"lfm2.5-thinking:latest"`) |
+
+### Builder Methods
+
+All builder methods return `this` for chaining.
+
+| Method             | Signature                                    | Description                                     |
+| ------------------ | -------------------------------------------- | ----------------------------------------------- |
+| `.system()`        | `(content: string) => this`                  | Add a system message                            |
+| `.user()`          | `(content: string) => this`                  | Add a user message                              |
+| `.tools()`         | `(defs: ToolDefinition[]) => this`           | Register tool schemas for the model             |
+| `.toolHandlers()`  | `(handlers: ToolHandler[]) => this`          | Register tool executor functions                |
+| `.format()`        | `(schema: string \| object) => this`         | Set response format (`"json"` or JSON schema)   |
+| `.maxIterations()` | `(n: number) => this`                        | Cap tool-calling pipeline loops (default: `10`) |
+| `.onThinking()`    | `(cb: (chunk: string) => void) => this`      | Callback for thinking/reasoning tokens          |
+| `.onContent()`     | `(cb: (chunk: string) => void) => this`      | Callback for response content tokens            |
+| `.onToolCall()`    | `(cb: (name, args) => void) => this`         | Callback when model requests a tool             |
+| `.onToolResult()`  | `(cb: (name, args, result) => void) => this` | Callback after a tool handler returns           |
+
+### Execution
+
+#### `execute(): Promise<ExecutionResult>`
+
+Consumes the full stream and returns the accumulated result.
+
+```ts
+const result = await task.execute();
+
+result.content; // string — raw model output
+result.inputTokens; // number
+result.outputTokens; // number
+result.toolCalls; // ToolCallResult[]
+result.parse<T>(); // T — JSON.parse(content) as T
+```
+
+#### `toReadableStream(): ReadableStream<StreamEvent>`
+
+Returns a Web `ReadableStream` for progressive consumption. Useful for piping to
+HTTP responses, teeing for multiple consumers, or using `TransformStream`
+middleware.
+
+```ts
+const stream = task.toReadableStream();
+const reader = stream.getReader();
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  // value.type: "thinking" | "content" | "tool_call" | "tool_result" | "done"
+}
+```
+
+## Features
+
+### Basic Chat
+
+```ts
+import { ollamaTask } from "./ollamaTask.ts";
+
+const result = await new ollamaTask("qwen3.5:2b")
+  .system("You are a concise assistant.")
+  .user("Explain what a closure is in JavaScript.")
+  .onContent((chunk) => process.stdout.write(chunk))
+  .execute();
+
+console.log(`\nTokens: ${result.inputTokens} in / ${result.outputTokens} out`);
+```
+
+### Thinking Models
+
+Models like `lfm2.5-thinking:latest` emit reasoning tokens before the final
+answer. `ollamaTask` parses both the native `message.thinking` field and
+`<think>` tags embedded in content.
+
+```ts
+const result = await new ollamaTask("lfm2.5-thinking:latest")
+  .system("Think step by step.")
+  .user("What is 137 * 482?")
+  .onThinking((chunk) => {
+    // reasoning tokens — stream in gray
+    process.stdout.write(`\x1b[90m${chunk}\x1b[0m`);
+  })
+  .onContent((chunk) => {
+    // final answer
+    process.stdout.write(chunk);
+  })
+  .execute();
+```
+
+### Tool Calling
+
+Define tools as JSON schemas, register handlers, and the pipeline runs
+automatically.
+
+```ts
+import {
+  ollamaTask,
+  type ToolDefinition,
+  type ToolHandler,
+} from "./ollamaTask.ts";
+
+const weatherTool: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "get_weather",
+    description: "Get the current weather for a location",
+    parameters: {
+      type: "object",
+      properties: {
+        location: { type: "string", description: "City name" },
+      },
+      required: ["location"],
+    },
+  },
+};
+
+const weatherHandler: ToolHandler = {
+  name: "get_weather",
+  execute: async (args) => {
+    // In production, call a real weather API
+    return {
+      temperature: 22,
+      condition: "sunny",
+      location: args.location,
+    };
+  },
+};
+
+const result = await new ollamaTask("qwen3.5:2b")
+  .system("You are a helpful assistant. Use tools when you need data.")
+  .user("What's the weather in Paris?")
+  .tools([weatherTool])
+  .toolHandlers([weatherHandler])
+  .onToolCall((name, args) => {
+    console.log(`\n🔧 Calling: ${name}(${JSON.stringify(args)})`);
+  })
+  .onToolResult((name, _args, result) => {
+    console.log(`📦 Result: ${JSON.stringify(result)}`);
+  })
+  .maxIterations(5)
+  .execute();
+
+console.log(`\nFinal: ${result.content}`);
+console.log(`Tool calls made: ${result.toolCalls.length}`);
+```
+
+#### How the Pipeline Works
+
+1. The model receives your messages + tool schemas
+2. If the model emits `tool_calls`, the pipeline:
+   - Fires `onToolCall` with the tool name and arguments
+   - Finds and executes the matching `ToolHandler`
+   - Fires `onToolResult` with the result
+   - Pushes `assistant` + `tool` messages to the conversation
+   - Sends the updated conversation back to the model
+3. Repeats until the model stops calling tools or `maxIterations` is reached
+
+### Structured Outputs
+
+Constrain the model to return valid JSON matching a schema.
+
+```ts
+interface Person {
+  name: string;
+  age: number;
+  occupation: string;
+}
+
+const personSchema = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    age: { type: "number" },
+    occupation: { type: "string" },
+  },
+  required: ["name", "age", "occupation"],
+};
+
+const result = await new ollamaTask("qwen3.5:2b")
+  .system("You are a data generator.")
+  .user("Create a fictional person.")
+  .format(personSchema)
+  .execute();
+
+// Raw JSON string
+console.log(result.content);
+// '{"name":"Alice","age":30,"occupation":"Engineer"}'
+
+// Typed parsed object
+const person = result.parse<Person>();
+console.log(person.name); // "Alice"
+console.log(person.age); // 30
+console.log(person.occupation); // "Engineer"
+```
+
+You can also pass `"json"` for generic JSON mode (no schema validation):
+
+```ts
+const result = await new ollamaTask("qwen3.5:2b")
+  .format("json")
+  .user("List 3 colors as a JSON array.")
+  .execute();
+
+const colors: string[] = result.parse<string[]>();
+```
+
+### WebStreams
+
+Use `toReadableStream()` to get a standard `ReadableStream<StreamEvent>`. This
+integrates with the Web Streams API — pipe to HTTP responses, tee for multiple
+consumers, or chain with `TransformStream`.
+
+#### Basic Stream Consumption
+
+```ts
+const stream = new ollamaTask("qwen3.5:2b")
+  .system("You are a storyteller.")
+  .user("Tell me a short story.")
+  .toReadableStream();
+
+for await (const event of stream) {
+  switch (event.type) {
+    case "thinking":
+      process.stdout.write(`\x1b[90m${event.data}\x1b[0m`);
+      break;
+    case "content":
+      process.stdout.write(event.data);
+      break;
+    case "done":
+      console.log(
+        `\n\nTokens: ${event.data.inputTokens} in / ${event.data.outputTokens} out`,
+      );
+      break;
+  }
+}
+```
+
+#### Piping to an HTTP Response
+
+```ts
+Deno.serve(async (req) => {
+  const stream = new ollamaTask("qwen3.5:2b")
+    .system("You are a helpful assistant.")
+    .user(new URL(req.url).searchParams.get("q") ?? "Hello")
+    .toReadableStream();
+
+  const textStream = stream
+    .pipeThrough(
+      new TransformStream({
+        transform(event, controller) {
+          if (event.type === "content") {
+            controller.enqueue(event.data);
+          }
+        },
+      }),
+    );
+
+  return new Response(textStream, {
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
+});
+```
+
+#### Teeing the Stream
+
+```ts
+const stream = task.toReadableStream();
+const [branch1, branch2] = stream.tee();
+
+// Consumer A: print to console
+consume(branch1, (event) => {
+  if (event.type === "content") process.stdout.write(event.data);
+});
+
+// Consumer B: collect into a variable
+const fullText = await consume(branch2, (event) => {
+  if (event.type === "content") return event.data;
+  return "";
+});
+```
+
+### StreamEvent Types
+
+The `StreamEvent` discriminated union:
+
+| `type`          | `data`                          | Description                         |
+| --------------- | ------------------------------- | ----------------------------------- |
+| `"thinking"`    | `string`                        | Reasoning/thinking token            |
+| `"content"`     | `string`                        | Response content token              |
+| `"tool_call"`   | `ToolCall`                      | Model requested a tool              |
+| `"tool_result"` | `ToolCallResult`                | Tool handler returned a result      |
+| `"done"`        | `{ inputTokens, outputTokens }` | Stream completed for this iteration |
+
+## Types
+
+### `ExecutionResult`
+
+```ts
+interface ExecutionResult {
+  content: string; // Raw model output
+  inputTokens: number; // Prompt tokens consumed
+  outputTokens: number; // Completion tokens generated
+  toolCalls: ToolCallResult[];
+  parse<T>(): T; // JSON.parse(content) as T
+}
+```
+
+### `ToolDefinition`
+
+```ts
+interface ToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: "object";
+      properties: Record<string, {
+        type: string;
+        description?: string;
+        enum?: unknown[];
+      }>;
+      required?: string[];
+    };
+  };
+}
+```
+
+### `ToolHandler`
+
+```ts
+interface ToolHandler {
+  name: string;
+  execute: (args: Record<string, unknown>) => unknown | Promise<unknown>;
+}
+```
+
+### `ToolCallResult`
+
+```ts
+interface ToolCallResult {
+  name: string;
+  arguments: Record<string, unknown>;
+  result: unknown;
+}
+```
+
+### `StreamEvent`
+
+```ts
+type StreamEvent =
+  | { type: "thinking"; data: string }
+  | { type: "content"; data: string }
+  | { type: "tool_call"; data: ToolCall }
+  | { type: "tool_result"; data: ToolCallResult }
+  | { type: "done"; data: { inputTokens: number; outputTokens: number } };
+```
+
+## Examples
+
+Run any example with:
+
+```bash
+deno run --allow-net=127.0.0.1:11434 <example>.ts
+```
+
+| File                         | Feature                             |
+| ---------------------------- | ----------------------------------- |
+| `example.ts`                 | Basic chat with thinking model      |
+| `toolExample.ts`             | Tool calling with callbacks         |
+| `webStreamExample.ts`        | WebStreams API                      |
+| `structuredOutputExample.ts` | Structured outputs with JSON schema |
+
+## Running with a Different Host
+
+By default, `ollama-js` connects to `http://127.0.0.1:11434`. To use a remote
+server, configure the Ollama client before instantiating `ollamaTask`:
+
+```ts
+import ollama from "ollama";
+
+// Set via environment variable
+// OLLAMA_HOST=http://my-server:11434 deno run --allow-net example.ts
+
+// Or configure in code (create a custom client)
+const customOllama = new ollama.Ollama({ host: "http://my-server:11434" });
+```
+
+## License
+
+MIT
