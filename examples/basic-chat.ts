@@ -5,7 +5,9 @@ const model = "LFM2.5:1.2b-instruct";
 
 const result = await new ollamaTask(model)
   .system(PromptEnginner)
-  .user("Crie um plano para a criação de um ERP em typescript, com deno e postgress")
+  .user(
+    "Crie um plano para a criação de um ERP em typescript, com deno e postgress",
+  )
   .onThinking((chunk) =>
     Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[90m${chunk}\x1b[0m`))
   )

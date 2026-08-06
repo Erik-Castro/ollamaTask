@@ -28,7 +28,9 @@ console.log(`  Added ${ids.length} documents.\n`);
 const cacheId = await store.add({
   text: "What is Deno?",
   kind: "cache",
-  metadata: { fullOutput: "Deno is a secure runtime for JavaScript and TypeScript." },
+  metadata: {
+    fullOutput: "Deno is a secure runtime for JavaScript and TypeScript.",
+  },
 });
 console.log(`  Cache entry added: ${cacheId}\n`);
 

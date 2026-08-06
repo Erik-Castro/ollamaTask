@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { EmbeddingClient } from "./client.ts";
-import { openDatabase, type DbHandle } from "./sqlite.ts";
+import { type DbHandle, openDatabase } from "./sqlite.ts";
 import type {
   DocumentKind,
   DocumentRecord,
@@ -23,7 +23,7 @@ export class EmbeddingStore {
     });
   }
 
-  async open(): Promise<void> {
+  open(): void {
     this.handle = openDatabase(this.dbPath);
   }
 
@@ -33,7 +33,9 @@ export class EmbeddingStore {
   }
 
   private get db(): DatabaseSync {
-    if (!this.handle) throw new Error("EmbeddingStore not opened. Call open() first.");
+    if (!this.handle) {
+      throw new Error("EmbeddingStore not opened. Call open() first.");
+    }
     return this.handle.db;
   }
 
@@ -181,7 +183,7 @@ export class EmbeddingStore {
       .slice(0, topK);
   }
 
-  async getById(id: string): Promise<DocumentRecord | null> {
+  getById(id: string): DocumentRecord | null {
     const row = this.db.prepare(
       `SELECT * FROM documents WHERE id = ?`,
     ).get(id) as {
@@ -205,7 +207,7 @@ export class EmbeddingStore {
     };
   }
 
-  async delete(id: string): Promise<boolean> {
+  delete(id: string): boolean {
     this.db.exec("BEGIN");
     try {
       this.db.prepare(`DELETE FROM vec_documents WHERE document_id = ?`).run(
@@ -222,7 +224,7 @@ export class EmbeddingStore {
     }
   }
 
-  async pruneCache(olderThanMs: number): Promise<number> {
+  pruneCache(olderThanMs: number): number {
     const cutoff = Date.now() - olderThanMs;
 
     this.db.exec("BEGIN");
@@ -246,10 +248,10 @@ export class EmbeddingStore {
     }
   }
 
-  async stats(): Promise<{
+  stats(): {
     total: number;
     byKind: Record<string, number>;
-  }> {
+  } {
     const total = (
       this.db.prepare(`SELECT COUNT(*) as c FROM documents`).get() as {
         c: number;

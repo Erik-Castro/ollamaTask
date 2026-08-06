@@ -146,12 +146,27 @@ export class ollamaTask {
         } else if (content) {
           const text = content;
 
-          if (text.includes("<think>")) isThinking = true;
-          if (text.includes("</think>")) isThinking = false;
+          const thinkOpen = text.includes("");
+          const thinkClose = text.includes("");
+
+          if (thinkOpen) isThinking = true;
+          if (thinkClose) isThinking = false;
 
           const cleanText = text.replace(/<\/?think>/g, "");
 
-          if (isThinking) {
+          if (thinkOpen && thinkClose) {
+            const thinkMatch = text.match(/<think>([\s\S]*?)<\/think>/);
+            if (thinkMatch?.[1]) {
+              this._onThinking?.(thinkMatch[1]);
+              yield { type: "thinking", data: thinkMatch[1] };
+            }
+            const afterThink = text.split(/<\/think>/)[1] ?? "";
+            if (afterThink) {
+              iterationContent += afterThink;
+              this._onContent?.(afterThink);
+              yield { type: "content", data: afterThink };
+            }
+          } else if (isThinking) {
             if (cleanText) {
               this._onThinking?.(cleanText);
               yield { type: "thinking", data: cleanText };

@@ -1,5 +1,4 @@
 import { DatabaseSync } from "node:sqlite";
-import { resolve } from "node:path";
 import { mkdirSync } from "node:fs";
 
 export interface DbHandle {

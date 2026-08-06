@@ -1,5 +1,5 @@
 import { EmbeddingStore } from "./store.ts";
-import { ollamaTask, type ExecutionResult } from "../ollamaTask.ts";
+import { type ExecutionResult, ollamaTask } from "../ollamaTask.ts";
 
 export interface RouteDefinition {
   name: string;
@@ -37,11 +37,13 @@ export class SemanticRouter {
 
   async route(
     input: string,
-    options?: { contextK?: number },
+    options?: { contextK?: number; routeTopK?: number; minScore?: number },
   ): Promise<RouteResult> {
+    const routeTopK = options?.routeTopK ?? Math.max(5, this.routes.size * 3);
+    const minScore = options?.minScore ?? 0.5;
     const hits = await this.store.search({
       query: input,
-      topK: 3,
+      topK: routeTopK,
       kind: "route_example",
     });
 
@@ -65,6 +67,15 @@ export class SemanticRouter {
       }
     }
 
+    if (bestScore < minScore) {
+      throw new Error(
+        `No route matched above threshold. Best score: ${
+          bestScore.toFixed(3)
+        }, required: ${minScore}. ` +
+          `Registered routes: ${Array.from(this.routes.keys()).join(", ")}`,
+      );
+    }
+
     const routeDef = this.routes.get(bestRoute)!;
 
     const contextK = options?.contextK ?? 3;
@@ -79,7 +90,8 @@ export class SemanticRouter {
       const contextBlock = contextHits
         .map((h) => `- ${h.text}`)
         .join("\n");
-      systemPrompt += `\n\nRelevant context from previous interactions:\n${contextBlock}`;
+      systemPrompt +=
+        `\n\nRelevant context from previous interactions:\n${contextBlock}`;
     }
 
     const task = new ollamaTask(routeDef.model)

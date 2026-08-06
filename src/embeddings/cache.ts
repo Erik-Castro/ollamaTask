@@ -1,5 +1,5 @@
 import { EmbeddingStore } from "./store.ts";
-import { ollamaTask, type ExecutionResult } from "../ollamaTask.ts";
+import { type ExecutionResult, ollamaTask } from "../ollamaTask.ts";
 
 export interface CacheOptions {
   minScore?: number;

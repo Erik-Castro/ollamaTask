@@ -44,11 +44,15 @@ for (const model of requiredModels) {
     const data = await res.json() as { models: Array<{ name: string }> };
     const found = data.models.some((m) => m.name.startsWith(model));
     if (!found) {
-      console.error(`Required model "${model}" not found. Run: ollama pull ${model}`);
+      console.error(
+        `Required model "${model}" not found. Run: ollama pull ${model}`,
+      );
       Deno.exit(1);
     }
   } catch {
-    console.error("Cannot reach Ollama at http://127.0.0.1:11434. Is it running?");
+    console.error(
+      "Cannot reach Ollama at http://127.0.0.1:11434. Is it running?",
+    );
     Deno.exit(1);
   }
 }
@@ -61,7 +65,11 @@ const store = new EmbeddingStore({ dbPath: DB_PATH });
 await store.open();
 
 const stats0 = await store.stats();
-assert("SETUP.1", stats0.total === 0, `Expected empty DB, got total=${stats0.total}`);
+assert(
+  "SETUP.1",
+  stats0.total === 0,
+  `Expected empty DB, got total=${stats0.total}`,
+);
 
 // ── Register routes ──────────────────────────────────────────────────
 
@@ -99,23 +107,26 @@ await router.register({
     "isso é positivo ou negativo?",
   ],
   model: "LFM2.5:350M",
-  systemPrompt:
-    "You are a quick classifier. Give short, direct answers.",
+  systemPrompt: "You are a quick classifier. Give short, direct answers.",
 });
 
 const statsAfterRegister = await store.stats();
 assert(
   "SETUP.2",
   (statsAfterRegister.byKind["route_example"] ?? 0) >= 9,
-  `Expected >= 9 route_example, got ${statsAfterRegister.byKind["route_example"]}`,
+  `Expected >= 9 route_example, got ${
+    statsAfterRegister.byKind["route_example"]
+  }`,
 );
 
 // ── Test inputs ──────────────────────────────────────────────────────
 
 const INPUT_A = "Crie uma função TypeScript que valide e-mail com regex";
-const INPUT_B = "Escreva uma função TS para validar email usando expressão regular";
+const INPUT_B =
+  "Escreva uma função TS para validar email usando expressão regular";
 const INPUT_C = "Explique passo a passo como essa validação de e-mail funciona";
-const INPUT_D = "Classifique: 'O deploy falhou de novo na staging' — bug ou feature?";
+const INPUT_D =
+  "Classifique: 'O deploy falhou de novo na staging' — bug ou feature?";
 
 // ══════════════════════════════════════════════════════════════════════
 // PASSO 1 — codegen, cache miss
@@ -126,9 +137,21 @@ const t1Start = Date.now();
 const r1 = await router.route(INPUT_A);
 const t1Time = ((Date.now() - t1Start) / 1000).toFixed(1);
 
-assert("T1.1", r1.route === "codegen", `Expected route=codegen, got ${r1.route}`);
-assert("T1.2", r1.score >= 0.5, `Expected score>=0.5, got ${r1.score.toFixed(3)}`);
-assert("T1.3", r1.result.content.length > 50, `Expected content>50 chars, got ${r1.result.content.length}`);
+assert(
+  "T1.1",
+  r1.route === "codegen",
+  `Expected route=codegen, got ${r1.route}`,
+);
+assert(
+  "T1.2",
+  r1.score >= 0.5,
+  `Expected score>=0.5, got ${r1.score.toFixed(3)}`,
+);
+assert(
+  "T1.3",
+  r1.result.content.length > 50,
+  `Expected content>50 chars, got ${r1.result.content.length}`,
+);
 
 const s1 = await store.stats();
 assert(
@@ -140,7 +163,8 @@ assert(
 const contentLower = r1.result.content.toLowerCase();
 assert(
   "T1.5",
-  contentLower.includes("email") || contentLower.includes("e-mail") || contentLower.includes("regex") || contentLower.includes("valid"),
+  contentLower.includes("email") || contentLower.includes("e-mail") ||
+    contentLower.includes("regex") || contentLower.includes("valid"),
   "Response should mention email/validation/regex",
 );
 
@@ -160,7 +184,11 @@ const c2 = await cachedRun(store, INPUT_B, {
 });
 const t2Time = ((Date.now() - t2Start) / 1000).toFixed(1);
 
-assert("T2.1", c2.fromCache === true, `Expected cache hit, got fromCache=${c2.fromCache}`);
+assert(
+  "T2.1",
+  c2.fromCache === true,
+  `Expected cache hit, got fromCache=${c2.fromCache}`,
+);
 assert(
   "T2.2",
   c2.result.content.length > 0,
@@ -169,7 +197,11 @@ assert(
 
 const cacheHitFast = parseFloat(t2Time) < parseFloat(t1Time) * 0.8;
 if (parseFloat(process.env.STRICT_TIMING ?? "0") === 1) {
-  assert("T2.3", cacheHitFast, `Expected cache faster than step 1 (${t1Time}s), got ${t2Time}s`);
+  assert(
+    "T2.3",
+    cacheHitFast,
+    `Expected cache faster than step 1 (${t1Time}s), got ${t2Time}s`,
+  );
 } else {
   log(`(soft timing) step1=${t1Time}s step2=${t2Time}s`);
   assert("T2.3", true, "timing check skipped (non-strict)");
@@ -196,7 +228,11 @@ const t3Start = Date.now();
 const r3 = await router.route(INPUT_C, { contextK: 3 });
 const t3Time = ((Date.now() - t3Start) / 1000).toFixed(1);
 
-assert("T3.1", r3.route === "reasoning", `Expected route=reasoning, got ${r3.route}`);
+assert(
+  "T3.1",
+  r3.route === "reasoning",
+  `Expected route=reasoning, got ${r3.route}`,
+);
 assert(
   "T3.2",
   r3.contextHits >= 1,
@@ -238,8 +274,7 @@ assert("T4.1", r4.route === "quick", `Expected route=quick, got ${r4.route}`);
 
 const r4Lower = r4.result.content.toLowerCase();
 const isShort = r4.result.content.length < 300;
-const hasClassification =
-  r4Lower.includes("bug") ||
+const hasClassification = r4Lower.includes("bug") ||
   r4Lower.includes("feature") ||
   r4Lower.includes("falha") ||
   r4Lower.includes("defeito") ||
@@ -312,7 +347,11 @@ const exampleIds = new Set(onlyExamples.map((h) => h.id));
 const runIds = new Set(onlyRuns.map((h) => h.id));
 const noOverlap = [...exampleIds].every((id) => !runIds.has(id));
 
-assert("T6.1", examplesCorrectKind, "All examples should have kind=route_example");
+assert(
+  "T6.1",
+  examplesCorrectKind,
+  "All examples should have kind=route_example",
+);
 assert("T6.2", runsCorrectKind, "All runs should have kind=run or cache");
 assert("T6.3", noOverlap, "No overlap between example and run results");
 
@@ -323,7 +362,9 @@ log(`runs found: ${onlyRuns.length}`);
 
 store2.close();
 
-console.log("\n=== RESULTADO: " + `${passed}/${passed + failed} asserts passed ===`);
+console.log(
+  "\n=== RESULTADO: " + `${passed}/${passed + failed} asserts passed ===`,
+);
 
 if (failed > 0) {
   console.log("\nFailed asserts:");

@@ -1,8 +1,9 @@
 # Spec: Semantic Memory Layer — SQLite + sqlite-vec
 
-**Projeto:** ollamaTask  
-**Status:** Draft  
-**Escopo:** Camada de embeddings + memória semântica persistente para routing, cache e contexto entre pipelines.
+**Projeto:** ollamaTask\
+**Status:** Draft\
+**Escopo:** Camada de embeddings + memória semântica persistente para routing,
+cache e contexto entre pipelines.
 
 ---
 
@@ -10,9 +11,9 @@
 
 Adicionar ao `ollamaTask` uma camada de **memória semântica local** que permita:
 
-1. **Roteamento** de prompts para pipelines adequados  
-2. **Cache semântico** (evitar reprocessar inputs muito similares)  
-3. **Recuperação de contexto** (few-shot / histórico de execuções)  
+1. **Roteamento** de prompts para pipelines adequados
+2. **Cache semântico** (evitar reprocessar inputs muito similares)
+3. **Recuperação de contexto** (few-shot / histórico de execuções)
 4. **Persistência** em arquivo SQLite com busca vetorial via `sqlite-vec`
 
 Tudo offline, sem serviços externos além do Ollama (modelo de embedding).
@@ -21,13 +22,13 @@ Tudo offline, sem serviços externos além do Ollama (modelo de embedding).
 
 ## 2. Stack
 
-| Componente | Escolha | Notas |
-|------------|---------|-------|
-| Runtime | Deno 2.x | Já usado no projeto |
-| SQLite driver | `jsr:@db/sqlite` | Suporte a loadable extensions |
-| Extensão vetorial | `npm:sqlite-vec` | `vec0` virtual tables |
-| Embeddings | Ollama `nomic-embed-text` | 768 dims, leve, bom para retrieval |
-| Persistência | Arquivo `.db` (ex: `./data/memory.db`) | Path configurável |
+| Componente        | Escolha                                | Notas                              |
+| ----------------- | -------------------------------------- | ---------------------------------- |
+| Runtime           | Deno 2.x                               | Já usado no projeto                |
+| SQLite driver     | `jsr:@db/sqlite`                       | Suporte a loadable extensions      |
+| Extensão vetorial | `npm:sqlite-vec`                       | `vec0` virtual tables              |
+| Embeddings        | Ollama `nomic-embed-text`              | 768 dims, leve, bom para retrieval |
+| Persistência      | Arquivo `.db` (ex: `./data/memory.db`) | Path configurável                  |
 
 ### Dependências
 
@@ -90,7 +91,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vec_documents USING vec0(
 );
 ```
 
-> **Importante:** `sqlite-vec` usa distância L2 por padrão no `MATCH`. Para similaridade coseno, normalizar os vetores antes de inserir/buscar **ou** converter distância em score na aplicação.
+> **Importante:** `sqlite-vec` usa distância L2 por padrão no `MATCH`. Para
+> similaridade coseno, normalizar os vetores antes de inserir/buscar **ou**
+> converter distância em score na aplicação.
 
 ### 4.3 Relação
 
@@ -122,11 +125,11 @@ export interface SearchHit extends DocumentRecord {
 }
 
 export interface EmbeddingStoreOptions {
-  dbPath?: string;              // default: "./data/memory.db"
-  embeddingModel?: string;      // default: "nomic-embed-text"
-  dimensions?: number;          // default: 768
+  dbPath?: string; // default: "./data/memory.db"
+  embeddingModel?: string; // default: "nomic-embed-text"
+  dimensions?: number; // default: 768
   /** Prefixos do nomic (recomendado) */
-  useTaskPrefixes?: boolean;    // default: true
+  useTaskPrefixes?: boolean; // default: true
 }
 ```
 
@@ -142,7 +145,10 @@ class EmbeddingClient {
   /** Embedding de documento (prefixo search_document:) */
   embedDocument(text: string): Promise<Float32Array>;
 
-  embedBatch(texts: string[], as: "query" | "document"): Promise<Float32Array[]>;
+  embedBatch(
+    texts: string[],
+    as: "query" | "document",
+  ): Promise<Float32Array[]>;
 }
 ```
 
@@ -160,19 +166,21 @@ class EmbeddingStore {
     text: string;
     kind?: DocumentKind;
     metadata?: Record<string, unknown>;
-    id?: string;                  // opcional; senão UUID
-  }): Promise<string>;            // retorna id
+    id?: string; // opcional; senão UUID
+  }): Promise<string>; // retorna id
 
-  addBatch(items: Array<{
-    text: string;
-    kind?: DocumentKind;
-    metadata?: Record<string, unknown>;
-  }>): Promise<string[]>;
+  addBatch(
+    items: Array<{
+      text: string;
+      kind?: DocumentKind;
+      metadata?: Record<string, unknown>;
+    }>,
+  ): Promise<string[]>;
 
   search(params: {
     query: string;
-    topK?: number;                // default 5
-    minScore?: number;            // default 0.0
+    topK?: number; // default 5
+    minScore?: number; // default 0.0
     kind?: DocumentKind | DocumentKind[];
   }): Promise<SearchHit[]>;
 
@@ -198,7 +206,7 @@ class SemanticRouter {
 
   register(route: {
     name: string;
-    examples: string[];           // persistidos como kind: "route_example"
+    examples: string[]; // persistidos como kind: "route_example"
     run: (input: string, context?: string) => Promise<ExecutionResult>;
   }): Promise<void>;
 
@@ -216,7 +224,8 @@ class SemanticRouter {
 
 ### 6.1 Serialização de vetores
 
-sqlite-vec (Deno/`@db/sqlite`) espera **BLOB** como `Uint8Array` de `Float32Array`:
+sqlite-vec (Deno/`@db/sqlite`) espera **BLOB** como `Uint8Array` de
+`Float32Array`:
 
 ```ts
 function toVecBlob(vec: Float32Array): Uint8Array {
@@ -230,10 +239,11 @@ function toVecBlob(vec: Float32Array): Uint8Array {
 
 ```ts
 // Heurística simples (ajustável)
-score = 1 / (1 + distance)
+score = 1 / (1 + distance);
 ```
 
-Documentar que o score **não** é coseno puro a menos que os vetores estejam L2-normalizados na inserção.
+Documentar que o score **não** é coseno puro a menos que os vetores estejam
+L2-normalizados na inserção.
 
 ### 6.3 Transações
 
@@ -250,10 +260,10 @@ COMMIT;
 
 Quando `useTaskPrefixes: true`:
 
-| Operação | Prefixo |
-|----------|---------|
-| `embedQuery` / search | `search_query: ` |
-| `embedDocument` / add | `search_document: ` |
+| Operação              | Prefixo            |
+| --------------------- | ------------------ |
+| `embedQuery` / search | `search_query:`    |
+| `embedDocument` / add | `search_document:` |
 
 ### 6.5 Path do DB
 
@@ -302,7 +312,8 @@ Ao registrar uma rota no `SemanticRouter`, cada `example` vira:
 add({ text: example, kind: "route_example", metadata: { route: name } })
 ```
 
-O router busca `kind="route_example"` e agrupa por `metadata.route` para escolher a melhor rota.
+O router busca `kind="route_example"` e agrupa por `metadata.route` para
+escolher a melhor rota.
 
 ---
 
@@ -327,44 +338,44 @@ ollamaTask/
 
 ## 9. Fora de escopo (v1)
 
-- Multi-tenancy / isolamento por projeto  
-- Quantização de vetores (int8/bit)  
-- Hybrid search (BM25 + vector)  
-- UI / dashboard  
-- Sincronização entre máquinas  
+- Multi-tenancy / isolamento por projeto
+- Quantização de vetores (int8/bit)
+- Hybrid search (BM25 + vector)
+- UI / dashboard
+- Sincronização entre máquinas
 - Dimensões diferentes de 768 (trocar modelo exige migration da vec0)
 
 ---
 
 ## 10. Critérios de aceite
 
-- [ ] `EmbeddingStore.open()` cria schema idempotente  
-- [ ] `add` + `search` retornam hits ordenados por similaridade  
-- [ ] Filtro por `kind` funciona  
-- [ ] Cache com `minScore=0.93` evita reexecução em input idêntico/quase idêntico  
-- [ ] DB em disco persiste entre processos Deno  
-- [ ] `:memory:` funciona em testes  
-- [ ] Transações não deixam documento órfão sem vetor (ou vice-versa)  
-- [ ] Exemplo em `embeddingExample.ts` roda com `nomic-embed-text` local  
+- [ ] `EmbeddingStore.open()` cria schema idempotente
+- [ ] `add` + `search` retornam hits ordenados por similaridade
+- [ ] Filtro por `kind` funciona
+- [ ] Cache com `minScore=0.93` evita reexecução em input idêntico/quase
+      idêntico
+- [ ] DB em disco persiste entre processos Deno
+- [ ] `:memory:` funciona em testes
+- [ ] Transações não deixam documento órfão sem vetor (ou vice-versa)
+- [ ] Exemplo em `embeddingExample.ts` roda com `nomic-embed-text` local
 
 ---
 
 ## 11. Riscos e decisões abertas
 
-| Item | Decisão proposta | Alternativa |
-|------|------------------|-------------|
-| Distância L2 vs coseno | Normalizar vetores no insert + score `1/(1+d)` | Usar só L2 bruto |
-| Dimensão fixa 768 | Travada no schema vec0 | Migration se mudar modelo |
-| Driver SQLite | `@db/sqlite` + `sqlite-vec` | Avaliar `node:sqlite` se Deno complicar FFI |
-| Tamanho do `text` | Guardar texto completo | Truncar + guardar hash do original |
+| Item                   | Decisão proposta                               | Alternativa                                 |
+| ---------------------- | ---------------------------------------------- | ------------------------------------------- |
+| Distância L2 vs coseno | Normalizar vetores no insert + score `1/(1+d)` | Usar só L2 bruto                            |
+| Dimensão fixa 768      | Travada no schema vec0                         | Migration se mudar modelo                   |
+| Driver SQLite          | `@db/sqlite` + `sqlite-vec`                    | Avaliar `node:sqlite` se Deno complicar FFI |
+| Tamanho do `text`      | Guardar texto completo                         | Truncar + guardar hash do original          |
 
 ---
 
 ## 12. Próximos passos de implementação
 
-1. `embeddings/sqlite.ts` — open + load extension + migrate  
-2. `embeddings/client.ts` — Ollama embed  
-3. `embeddings/store.ts` — CRUD + search  
-4. `examples/embeddingExample.ts` — smoke test  
-5. (Fase 2) `router.ts` + integração com pipelines  
-
+1. `embeddings/sqlite.ts` — open + load extension + migrate
+2. `embeddings/client.ts` — Ollama embed
+3. `embeddings/store.ts` — CRUD + search
+4. `examples/embeddingExample.ts` — smoke test
+5. (Fase 2) `router.ts` + integração com pipelines

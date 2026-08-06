@@ -416,6 +416,68 @@ type StreamEvent =
   | { type: "done"; data: { inputTokens: number; outputTokens: number } };
 ```
 
+## Pipeline
+
+Chain multiple models in sequence with `ollamaPipeline`. Each stage runs an
+independent `ollamaTask` — messages don't leak between stages — and the output
+of one stage feeds into the next via `transform`.
+
+```ts
+import { ollamaPipeline } from "./src/ollamaPipeline.ts";
+
+const results = await ollamaPipeline
+  .create("Crie uma API REST com Deno + Hono para gerenciar tarefas")
+  .stage({
+    model: "qwen3.5:2b",
+    system: "Refine o prompt do usuário. Seja claro e específico.",
+    onContent: (c) => process.stdout.write(c),
+  })
+  .then({
+    model: "qwen3.5:2b",
+    system: "Gere um plano técnico detalhado em markdown. Não escreva código.",
+    onContent: (c) => process.stdout.write(c),
+  })
+  .then({
+    model: "qwen3.5:2b",
+    system: "Gere código completo e funcional.",
+    transform: (prev, original) =>
+      `Pedido original:\n${original}\n\nPlano:\n${prev.content}\n\nGere o código.`,
+    onContent: (c) => process.stdout.write(c),
+  })
+  .execute(); // → ExecutionResult[]
+
+// results[0] → prompt refinado
+// results[1] → plano técnico
+// results[2] → código final
+```
+
+Use `.run()` to get only the last stage's result:
+
+```ts
+const final = await ollamaPipeline
+  .create("...")
+  .stage({ model: "a", system: "..." })
+  .then({ model: "b", system: "..." })
+  .run(); // → ExecutionResult (last stage only)
+```
+
+### StageConfig
+
+| Property        | Type                           | Description                                  |
+| --------------- | ------------------------------ | -------------------------------------------- |
+| `model`         | `string`                       | Ollama model name (required)                 |
+| `system`        | `string`                       | System prompt for this stage                 |
+| `user`          | `string`                       | Override user message (default: prev result) |
+| `transform`     | `(prev, original) => string`   | Transform previous result into next prompt   |
+| `tools`         | `ToolDefinition[]`             | Tool schemas for this stage                  |
+| `toolHandlers`  | `ToolHandler[]`                | Tool executor functions                      |
+| `format`        | `string \| object`             | Response format (`"json"` or JSON schema)    |
+| `maxIterations` | `number`                       | Cap tool-calling loops (default: `10`)       |
+| `onThinking`    | `(chunk: string) => void`      | Thinking token callback                      |
+| `onContent`     | `(chunk: string) => void`      | Content token callback                       |
+| `onToolCall`    | `(name, args) => void`         | Tool call callback                           |
+| `onToolResult`  | `(name, args, result) => void` | Tool result callback                         |
+
 ## Examples
 
 Run any example with:
@@ -424,12 +486,13 @@ Run any example with:
 deno run --allow-net=127.0.0.1:11434 examples/<file>.ts
 ```
 
-| File                      | Feature                             |
-| ------------------------- | ----------------------------------- |
-| `examples/basic-chat.ts`  | Basic chat with thinking model      |
-| `examples/tool-calling.ts`| Tool calling with callbacks         |
-| `examples/web-stream.ts`  | WebStreams API                      |
+| File                            | Feature                             |
+| ------------------------------- | ----------------------------------- |
+| `examples/basic-chat.ts`        | Basic chat with thinking model      |
+| `examples/tool-calling.ts`      | Tool calling with callbacks         |
+| `examples/web-stream.ts`        | WebStreams API                      |
 | `examples/structured-output.ts` | Structured outputs with JSON schema |
+| `examples/pipeline-usage.ts`    | Multi-model pipeline                |
 
 ## Running with a Different Host
 
