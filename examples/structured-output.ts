@@ -1,4 +1,4 @@
-import { ollamaTask } from "./ollamaTask.ts";
+import { ollamaTask } from "../src/ollamaTask.ts";
 
 interface Weather {
   location: string;

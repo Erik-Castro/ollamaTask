@@ -2,7 +2,7 @@ import {
   ollamaTask,
   type ToolDefinition,
   type ToolHandler,
-} from "./ollamaTask.ts";
+} from "../src/ollamaTask.ts";
 
 const weatherTool: ToolDefinition = {
   type: "function",

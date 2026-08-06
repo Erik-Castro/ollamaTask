@@ -1,11 +1,11 @@
-import { ollamaTask } from "./ollamaTask.ts";
+import { ollamaTask } from "../src/ollamaTask.ts";
 import { PromptEnginner } from "./prompts.ts";
 
 const model = "LFM2.5:1.2b-instruct";
 
 const result = await new ollamaTask(model)
   .system(PromptEnginner)
-  .user("Gen a complete ERP with typescript with deno runtime and postgress db")
+  .user("Crie um plano para a criação de um ERP em typescript, com deno e postgress")
   .onThinking((chunk) =>
     Deno.stdout.writeSync(new TextEncoder().encode(`\x1b[90m${chunk}\x1b[0m`))
   )

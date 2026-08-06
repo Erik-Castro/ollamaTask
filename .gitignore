@@ -1,3 +1,4 @@
 .atl/
 .codegraph/
 deno.lock
+data/

@@ -29,7 +29,7 @@ calling**, **structured outputs**, and **WebStreams** — all built on the
 ## Setup
 
 ```bash
-# Clone or copy ollamaTask.ts into your project
+# Copy src/ollamaTask.ts into your project
 # Add the ollama dependency
 deno add npm:ollama@^0.6.3
 ```
@@ -37,7 +37,7 @@ deno add npm:ollama@^0.6.3
 ## Quick Start
 
 ```ts
-import { ollamaTask } from "./ollamaTask.ts";
+import { ollamaTask } from "./src/ollamaTask.ts";
 
 const result = await new ollamaTask("qwen3.5:2b")
   .system("You are a helpful assistant.")
@@ -115,7 +115,7 @@ while (true) {
 ### Basic Chat
 
 ```ts
-import { ollamaTask } from "./ollamaTask.ts";
+import { ollamaTask } from "./src/ollamaTask.ts";
 
 const result = await new ollamaTask("qwen3.5:2b")
   .system("You are a concise assistant.")
@@ -157,7 +157,7 @@ import {
   ollamaTask,
   type ToolDefinition,
   type ToolHandler,
-} from "./ollamaTask.ts";
+} from "./src/ollamaTask.ts";
 
 const weatherTool: ToolDefinition = {
   type: "function",
@@ -421,15 +421,15 @@ type StreamEvent =
 Run any example with:
 
 ```bash
-deno run --allow-net=127.0.0.1:11434 <example>.ts
+deno run --allow-net=127.0.0.1:11434 examples/<file>.ts
 ```
 
-| File                         | Feature                             |
-| ---------------------------- | ----------------------------------- |
-| `example.ts`                 | Basic chat with thinking model      |
-| `toolExample.ts`             | Tool calling with callbacks         |
-| `webStreamExample.ts`        | WebStreams API                      |
-| `structuredOutputExample.ts` | Structured outputs with JSON schema |
+| File                      | Feature                             |
+| ------------------------- | ----------------------------------- |
+| `examples/basic-chat.ts`  | Basic chat with thinking model      |
+| `examples/tool-calling.ts`| Tool calling with callbacks         |
+| `examples/web-stream.ts`  | WebStreams API                      |
+| `examples/structured-output.ts` | Structured outputs with JSON schema |
 
 ## Running with a Different Host
 

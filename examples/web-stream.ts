@@ -1,4 +1,4 @@
-import { ollamaTask } from "./ollamaTask.ts";
+import { ollamaTask } from "../src/ollamaTask.ts";
 
 const model = "qwen2.5-coder:0.5b";
 
