@@ -28,7 +28,7 @@ const weatherHandler: ToolHandler = {
   }),
 };
 
-const model = "lfm2.5-thinking:latest";
+const model = "LFM2.5:1.2b-thinking";
 
 const result = await new ollamaTask(model)
   .system("You are a helpful assistant. Use tools when you need data.")

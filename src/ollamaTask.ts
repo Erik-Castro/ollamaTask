@@ -130,52 +130,74 @@ export class ollamaTask {
         messages: this._messages,
         tools: this._tools,
         format: this._format,
+        // think: true,
         stream: true,
       });
 
-      let isThinking = false;
       let iterationContent = "";
       let iterationToolCalls: ToolCall[] = [];
+      let buf = "";
+      let inThink = false;
+      const onThinking = this._onThinking;
+      const onContent = this._onContent;
+
+      const flush = function* (
+        type: "thinking" | "content",
+        text: string,
+      ): Generator<StreamEvent, void, void> {
+        if (!text) return;
+        if (type === "thinking") {
+          onThinking?.(text);
+          yield { type: "thinking", data: text };
+        } else {
+          iterationContent += text;
+          onContent?.(text);
+          yield { type: "content", data: text };
+        }
+      };
 
       for await (const chunk of response) {
         const { thinking, content, tool_calls } = chunk.message;
 
         if (thinking) {
-          this._onThinking?.(thinking as string);
-          yield { type: "thinking", data: thinking as string };
+          this._onThinking?.(thinking);
+          yield { type: "thinking", data: thinking };
         } else if (content) {
-          const text = content;
+          buf += content;
 
-          const thinkOpen = text.includes("");
-          const thinkClose = text.includes("");
+          const LT = String.fromCharCode(60);
+          const GT = String.fromCharCode(62);
+          const THINK_OPEN = LT + "think" + GT;
+          const THINK_CLOSE = LT + "/think" + GT;
+          const isPartial = (s: string) =>
+            !!s &&
+            (THINK_OPEN.startsWith(s) || THINK_CLOSE.startsWith(s));
 
-          if (thinkOpen) isThinking = true;
-          if (thinkClose) isThinking = false;
-
-          const cleanText = text.replace(/<\/?think>/g, "");
-
-          if (thinkOpen && thinkClose) {
-            const thinkMatch = text.match(/<think>([\s\S]*?)<\/think>/);
-            if (thinkMatch?.[1]) {
-              this._onThinking?.(thinkMatch[1]);
-              yield { type: "thinking", data: thinkMatch[1] };
+          while (true) {
+            if (inThink) {
+              const closeIdx = buf.indexOf(THINK_CLOSE);
+              if (closeIdx === -1) break;
+              yield* flush("thinking", buf.slice(0, closeIdx));
+              buf = buf.slice(closeIdx + THINK_CLOSE.length);
+              inThink = false;
+            } else {
+              const openIdx = buf.indexOf(THINK_OPEN);
+              if (openIdx === -1) break;
+              yield* flush("content", buf.slice(0, openIdx));
+              buf = buf.slice(openIdx + THINK_OPEN.length);
+              inThink = true;
             }
-            const afterThink = text.split(/<\/think>/)[1] ?? "";
-            if (afterThink) {
-              iterationContent += afterThink;
-              this._onContent?.(afterThink);
-              yield { type: "content", data: afterThink };
-            }
-          } else if (isThinking) {
-            if (cleanText) {
-              this._onThinking?.(cleanText);
-              yield { type: "thinking", data: cleanText };
-            }
-          } else if (cleanText) {
-            iterationContent += cleanText;
-            this._onContent?.(cleanText);
-            yield { type: "content", data: cleanText };
           }
+
+          let keep = buf.length;
+          for (let i = buf.length; i >= 0; i--) {
+            if (isPartial(buf.slice(i))) {
+              keep = i;
+              break;
+            }
+          }
+          yield* flush(inThink ? "thinking" : "content", buf.slice(0, keep));
+          buf = buf.slice(keep);
         }
 
         if (tool_calls?.length) iterationToolCalls = tool_calls;
