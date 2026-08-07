@@ -24,8 +24,8 @@ const results = await ollamaPipeline
     model: "qwen2.5-coder:latest",
     system:
       "Você é dev TypeScript sênior em Deno. Gere código completo e funcional.",
-    transform: (prev) =>
-      `Plano técnico:\n${prev.content}\n\nGere o código.`,
+    transform: (prev, original) =>
+      `Pedido original:\n${original}\n\nPlano técnico:\n${prev.content}\n\nGere o código.`,
     onContent: (c) => write(c),
   })
   .execute();

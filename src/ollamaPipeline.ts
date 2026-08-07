@@ -10,7 +10,7 @@ export interface StageConfig {
   model: string;
   system?: string;
   user?: string;
-  transform?: (prev: ExecutionResult) => string;
+  transform?: (prev: ExecutionResult, original: string) => string;
   tools?: ToolDefinition[];
   toolHandlers?: ToolHandler[];
   format?: string | object;
@@ -53,7 +53,7 @@ export class ollamaPipeline {
 
     let userMessage: string;
     if (prev && config.transform) {
-      userMessage = config.transform(prev);
+      userMessage = config.transform(prev, this._prompt);
     } else if (config.user) {
       userMessage = config.user;
     } else if (prev) {

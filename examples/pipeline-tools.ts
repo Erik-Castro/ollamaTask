@@ -226,8 +226,8 @@ try {
       model: "qwen3.5:2b",
       system:
         "Você é analista. Use code_search com pattern='export const', include='ts,tsx', no código. Use which para os binários, file_read para confirmar snippets. args de run_command: 'args' space-separated. Salve a contagem em state_set key='countTools'. Responda apenas com análise JSON.",
-      transform: (prev) =>
-        `Resumo da 1ª etapa:\n${prev.content}\n\nAgora faça a análise dos arquivos de src/tools/ e conte ferramentas export com code_search.`,
+      transform: (prev, original) =>
+        `Pedido original: ${original}\n\nResumo da 1ª etapa:\n${prev.content}\n\nAgora faça a análise dos arquivos de src/tools/ e conte ferramentas export com code_search.`,
       tools: sliced([
         "code_search",
         "file_read",
@@ -246,8 +246,8 @@ try {
       model: "qwen3.5:0.8b",
       system:
         "Você é pesquisador. Use web_search com query curta. Salve um resumo em state_set 'web_note'. Use state_get/state_list para conferir. Responda JSON com keys: nota, resumo.",
-      transform: (prev) =>
-        `Etapa 2 (código):\n${prev.content}\n\nAgora faça uma checagem web breve.`,
+      transform: (prev, original) =>
+        `Pedido original: ${original}\n\nEtapa 2 (código):\n${prev.content}\n\nAgora faça uma checagem web breve.`,
       tools: sliced([
         "web_search",
         "web_fetch",
@@ -265,8 +265,8 @@ try {
       model: "qwen3.5:0.8b",
       system:
         "Você recebe os dados na mensagem. Use state_set com key='report', value=normalize-resumo JSON {ferramentas, arquivos, fontes, nota}. Responda apenas um JSON com a chave 'gravado' true.",
-      transform: (prev) =>
-        `Dados coletados (JSON): ${prev.content}\n\nGrave o resumo no state com state_set key='report' e responda o JSON final.`,
+      transform: (prev, original) =>
+        `Pedido original: ${original}\n\nDados coletados (JSON): ${prev.content}\n\nGrave o resumo no state com state_set key='report' e responda o JSON final.`,
       tools: sliced([
         "calculate",
         "state_get",

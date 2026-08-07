@@ -198,7 +198,7 @@ const results = await ollamaPipeline
   .create(BRIEF)
   .stage({
     // 1) Ambiente + data
-    model: "qwen3.5:2b",
+    model: "qwen3.5:0.8b",
     system: `Você prepara o contexto do contrato.
 1) Chame now.
 2) Chame list_dir path="data".
@@ -216,6 +216,16 @@ Responda só um JSON curto confirmando o que fez.`,
       "state_get",
     ),
     toolHandlers: safeHandlers,
+    format: {
+      type: "object",
+      properties: {
+        ok: { type: "boolean" },
+        cwdHint: { type: "string" },
+        hasGit: { type: "boolean" },
+        generatedAt: { type: "string" },
+      },
+      required: ["ok"],
+    },
     maxIterations: 6,
     onContent: write,
     onThinking: gray,
@@ -254,6 +264,15 @@ Responda só o JSON dos valores.`,
       `Pesquisa:\n${prev.content}\n\nCalcule os valores do contrato.`,
     tools: pick("calculate", "state_get", "state_set"),
     toolHandlers: safeHandlers,
+    format: {
+      type: "object",
+      properties: {
+        monthlyNet: { type: "number" },
+        totalPeriod: { type: "number" },
+        currency: { type: "string" },
+      },
+      required: ["monthlyNet", "totalPeriod", "currency"],
+    },
     maxIterations: 5,
     onContent: write,
     onThinking: gray,
@@ -282,6 +301,15 @@ Responda JSON {path, bytesHint, ok:true}.`,
       "state_set",
     ),
     toolHandlers: safeHandlers,
+    format: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        bytesHint: { type: "number" },
+        ok: { type: "boolean" },
+      },
+      required: ["path", "ok"],
+    },
     maxIterations: 6,
     onContent: write,
     onThinking: gray,
@@ -300,6 +328,15 @@ Responda JSON {cleaned:true, keysRestantes, previewOk:true/false}.`,
       `Stage anterior:\n${prev.content}\n\nLimpe tmp_scratch e confirme o arquivo.`,
     tools: pick("state_delete", "state_list", "state_get", "file_read"),
     toolHandlers: safeHandlers,
+    format: {
+      type: "object",
+      properties: {
+        cleaned: { type: "boolean" },
+        keysRemaining: { type: "integer" },
+        previewOk: { type: "boolean" },
+      },
+      required: ["cleaned", "previewOk"],
+    },
     maxIterations: 4,
     onContent: write,
     onThinking: gray,

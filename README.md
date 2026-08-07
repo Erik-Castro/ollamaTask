@@ -425,10 +425,9 @@ Chain multiple models in sequence with `ollamaPipeline`. Each stage runs an
 independent `ollamaTask` — messages don't leak between stages — and the output
 of one stage feeds into the next via `transform`.
 
-> **Note:** `transform` receives only `(prev)` — the previous stage's
-> `ExecutionResult`. Stages after the first cannot see the original prompt
-> (pass it explicitly via `transform` if needed). The original prompt is used
-> only as the starting user message when no `user`/`transform` is set.
+> **Note:** `transform` receives `(prev, original)` — the previous stage's
+> `ExecutionResult` and the original prompt from `.create()`, so later stages
+> always have access to the user's original request.
 
 ```ts
 import { ollamaPipeline } from "./src/ollamaPipeline.ts";
@@ -448,8 +447,8 @@ const results = await ollamaPipeline
   .then({
     model: "qwen3.5:2b",
     system: "Gere código completo e funcional.",
-    transform: (prev) =>
-      `Plano:\n${prev.content}\n\nGere o código.`,
+    transform: (prev, original) =>
+      `Pedido original:\n${original}\n\nPlano:\n${prev.content}\n\nGere o código.`,
     onContent: (c) => process.stdout.write(c),
   })
   .execute(); // → ExecutionResult[]
@@ -476,7 +475,7 @@ const final = await ollamaPipeline
 | `model`         | `string`                       | Ollama model name (required)                 |
 | `system`        | `string`                       | System prompt for this stage                 |
 | `user`          | `string`                       | Override user message (default: prev result) |
-| `transform`     | `(prev) => string`              | Transform previous result into next prompt   |
+| `transform`     | `(prev, original) => string`     | Transform previous result into next prompt  |
 | `tools`         | `ToolDefinition[]`             | Tool schemas for this stage                  |
 | `toolHandlers`  | `ToolHandler[]`                | Tool executor functions                      |
 | `format`        | `string \| object`             | Response format (`"json"` or JSON schema)    |
