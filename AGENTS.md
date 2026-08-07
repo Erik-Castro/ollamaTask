@@ -31,8 +31,13 @@ deno task dev
 
 - Library files live in `src/`. Entry points: `src/ollamaTask.ts`,
   `src/ollamaPipeline.ts`.
+- `src/tools/` is the tool suite (Now, Calculator, ListDir, FileRead, FileWrite,
+  CodeSearch, Which, RunCommand, WebSearch, WebFetch, StateStore + html/net
+  helpers) — zero-dependency, structured-results modules meant for tool-calling
+  pipelines.
 - `src/embeddings/` is a separate module (cache, client, router, sqlite store).
-- `data/` and `.gitignore`d — local runtime data, not source.
+- `data/` is `.gitignore`d — local runtime data (incl. `data/state.json`),
+  not source.
 - `docs/` contains design specs, not user-facing docs.
 - Examples are self-contained runnable demos, not tests.
 

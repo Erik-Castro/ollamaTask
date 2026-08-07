@@ -60,10 +60,16 @@ const tools: ToolDefinition[] = [
   tool("list_dir", "List entries of a directory (name + kind), dirs first.", {
     path: { type: "string" },
   }),
-  tool("file_read", "Read a text file ({ path, content, truncated }).", {
-    path: { type: "string" },
-    maxChars: { type: "integer" },
-  }, ["path"]),
+  tool(
+    "file_read",
+    "Read a text file from a byte offset ({ path, offset, content, truncated }).",
+    {
+      path: { type: "string" },
+      maxChars: { type: "integer" },
+      offset: { type: "integer" },
+    },
+    ["path"],
+  ),
   tool("file_write", "Create/overwrite a text file ({ path, bytesWritten }).", {
     path: { type: "string" },
     content: { type: "string" },
@@ -119,7 +125,10 @@ const handlers: ToolHandler[] = [
   {
     name: "file_read",
     execute: (a: ToolArgs) =>
-      FileRead(str(a.path), { maxChars: num(a.maxChars) }),
+      FileRead(str(a.path), {
+        maxChars: num(a.maxChars),
+        offset: num(a.offset),
+      }),
   },
   {
     name: "file_write",

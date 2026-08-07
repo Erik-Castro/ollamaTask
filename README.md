@@ -19,6 +19,9 @@ calling**, **structured outputs**, and **WebStreams** — all built on the
   `ReadableStream<StreamEvent>` for piping, teeing, or progressive consumption
 - **Callbacks** — `onThinking`, `onContent`, `onToolCall`, `onToolResult` for
   full observability
+- **Tool suite** — `src/tools/` ships ready-to-use, zero-dependency tools
+  (search, web, filesystem, calculator, state, command execution) built for
+  tool-calling pipelines
 
 ## Requirements
 
@@ -422,6 +425,11 @@ Chain multiple models in sequence with `ollamaPipeline`. Each stage runs an
 independent `ollamaTask` — messages don't leak between stages — and the output
 of one stage feeds into the next via `transform`.
 
+> **Note:** `transform` receives only `(prev)` — the previous stage's
+> `ExecutionResult`. Stages after the first cannot see the original prompt
+> (pass it explicitly via `transform` if needed). The original prompt is used
+> only as the starting user message when no `user`/`transform` is set.
+
 ```ts
 import { ollamaPipeline } from "./src/ollamaPipeline.ts";
 
@@ -440,8 +448,8 @@ const results = await ollamaPipeline
   .then({
     model: "qwen3.5:2b",
     system: "Gere código completo e funcional.",
-    transform: (prev, original) =>
-      `Pedido original:\n${original}\n\nPlano:\n${prev.content}\n\nGere o código.`,
+    transform: (prev) =>
+      `Plano:\n${prev.content}\n\nGere o código.`,
     onContent: (c) => process.stdout.write(c),
   })
   .execute(); // → ExecutionResult[]
@@ -468,7 +476,7 @@ const final = await ollamaPipeline
 | `model`         | `string`                       | Ollama model name (required)                 |
 | `system`        | `string`                       | System prompt for this stage                 |
 | `user`          | `string`                       | Override user message (default: prev result) |
-| `transform`     | `(prev, original) => string`   | Transform previous result into next prompt   |
+| `transform`     | `(prev) => string`              | Transform previous result into next prompt   |
 | `tools`         | `ToolDefinition[]`             | Tool schemas for this stage                  |
 | `toolHandlers`  | `ToolHandler[]`                | Tool executor functions                      |
 | `format`        | `string \| object`             | Response format (`"json"` or JSON schema)    |
@@ -477,6 +485,76 @@ const final = await ollamaPipeline
 | `onContent`     | `(chunk: string) => void`      | Content token callback                       |
 | `onToolCall`    | `(name, args) => void`         | Tool call callback                           |
 | `onToolResult`  | `(name, args, result) => void` | Tool result callback                         |
+
+## Tools (`src/tools/`)
+
+Reusable, zero-dependency building blocks commonly exposed to the model as
+tool-calling functions. Each is a single self-contained module returning
+structured results. They also power `examples/pipeline-tools.ts`.
+
+All functions take plain options and return serializable objects, so they map
+cleanly onto `ToolDefinition`/`ToolHandler` pairs.
+
+| Module          | Function / family                           | Description                                                            |
+| --------------- | ------------------------------------------- | ---------------------------------------------------------------------- |
+| `Now.ts`        | `Now()`                                     | Current timestamp: ISO, unix, timezone, UTC offset                     |
+| `Calculator.ts` | `Calculator(expr)`                          | Evaluates arithmetic via a safe custom parser (no `eval`/`Function`)    |
+| `ListDir.ts`    | `ListDir(path = ".")`                      | Lists entries `{ name, kind }`, dirs first, sorted                     |
+| `FileRead.ts`   | `FileRead(path, { maxChars, offset })` | Reads a text file from a byte `offset` (`Deno.seek`), truncated  |
+| `FileWrite.ts`  | `FileWrite(path, content)`                 | Writes a text file, returns bytes written                              |
+| `CodeSearch.ts` | `CodeSearch(pattern, opts)`                | Regex search across files; auto backend `rg` → Deno fallback           |
+| `Which.ts`      | `Which(binary)`                            | Checks if a binary exists on `PATH` (no subprocess)                    |
+| `RunCommand.ts` | `RunCommand(cmd, args, { timeoutMs })`     | Runs a whitelisted command with timeout and output truncation           |
+| `WebSearch.ts`  | `WebSearch(query)`               | DuckDuckGo search, parses results and optional instant-answer           |
+| `WebFetch.ts`   | `WebFetch(url, { maxChars })`             | Fetches a page and extracts title + clean text                         |
+| `StateStore.ts` | `get/set/delete/list`                     | Persistent JSON K-V store (default `data/state.json`)                 |
+| `html.ts`       | helpers                                    | `stripTags`, `unescapeHtml`, `cleanText`, `extractText`, `extractTitle` |
+| `net.ts`        | helpers                                    | `BROWSER_HEADERS` + `fetchPage(url)`                                   |
+
+### Calculator
+
+Evaluates `+ - * / % ^`, parentheses, constants (`pi`, `e`, `tau`) and
+functions (`sqrt`, `sin`, `cos`, `tan`, `abs`, `round`, `floor`, `ceil`,
+`log`, `ln`, `min`, `max`). Uses a recursive-descent parser — the model never
+"calculates", so results are deterministic.
+
+```ts
+import { Calculator } from "./src/tools/Calculator.ts";
+
+Calculator("2 + 2"); // { expression, value: 4, error: null }
+Calculator("sqrt(16) + abs(-4)"); // { value: 8, error: null }
+Calculator("2 + process.exit(1)"); // { value: null, error: "caractere inesperado" }
+```
+
+### `CodeSearch` with dual backends
+
+`backend: "auto"` (default) checks for `rg` via `Which()`; if available it runs
+`rg` (`--allow-run=rg` needed), otherwise it falls back to a pure-Deno walk.
+The response reports which backend ran. The `data/` directory (gitignored) is
+excluded by default.
+
+```ts
+import { CodeSearch } from "./src/tools/CodeSearch.ts";
+
+await CodeSearch("export const", {
+  include: ["ts"],
+  limit: 20,
+  backend: "auto",
+});
+// { pattern, backend: "rg" | "deno", matches: [{ file, line, snippet }], truncated }
+```
+
+### StateStore
+
+Simple persisted key-value store, backed by a JSON file. Default filename is
+`data/state.json`, which lives in the gitignored `data/` folder.
+
+```ts
+import { StateStoreSet, StateStoreGet } from "./src/tools/StateStore.ts";
+
+await StateStoreSet("theme", "dark");
+await StateStoreGet("theme"); // { key: "theme", value: "dark" }
+```
 
 ## Examples
 
@@ -493,6 +571,18 @@ deno run --allow-net=127.0.0.1:11434 examples/<file>.ts
 | `examples/web-stream.ts`        | WebStreams API                      |
 | `examples/structured-output.ts` | Structured outputs with JSON schema |
 | `examples/pipeline-usage.ts`    | Multi-model pipeline                |
+| `examples/websearch-tool.ts`    | `web_search` wired into `ollamaTask` |
+| `examples/pipeline-tools.ts`    | 4-stage pipeline using the full tool suite |
+| `examples/example.ts`           | Contract-generation pipeline using all tools with `FileRead` offset |
+
+The `examples/pipeline-tools.ts` example needs permission flags beyond the
+Ollama host because it touches network, filesystem, environment and a partial
+`--allow-run`:
+
+```bash
+deno run --allow-net --allow-env --allow-read --allow-write --allow-run \
+  examples/pipeline-tools.ts
+```
 
 ## Running with a Different Host
 
