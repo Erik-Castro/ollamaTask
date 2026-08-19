@@ -4,6 +4,7 @@ import {
   type ToolArgs,
   type ToolDefinition,
   type ToolHandler,
+  type Thinking
 } from "./ollamaTask.ts";
 
 export interface StageConfig {
@@ -19,6 +20,7 @@ export interface StageConfig {
   onContent?: (chunk: string) => void;
   onToolCall?: (name: string, args: ToolArgs) => void;
   onToolResult?: (name: string, args: ToolArgs, result: unknown) => void;
+  think?: Thinking;
 }
 
 export class ollamaPipeline {
@@ -72,6 +74,7 @@ export class ollamaPipeline {
     if (config.onContent) task.onContent(config.onContent);
     if (config.onToolCall) task.onToolCall(config.onToolCall);
     if (config.onToolResult) task.onToolResult(config.onToolResult);
+    if (config.think) task.reasoning(config.think);
 
     return task.execute();
   }

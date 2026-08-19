@@ -51,6 +51,8 @@ export type StreamEvent =
     data: { inputTokens: number; outputTokens: number };
   };
 
+export type Thinking = true | "low" | "medium" | "high" | "max" | undefined
+
 export class ollamaTask {
   private _messages: Message[] = [];
   private _model: string;
@@ -58,6 +60,7 @@ export class ollamaTask {
   private _handlers?: ToolHandler[];
   private _format?: string | object;
   private _maxIterations = 10;
+  private _resoaning:Thinking = undefined
   private _onThinking?: (chunk: string) => void;
   private _onContent?: (chunk: string) => void;
   private _onToolCall?: (name: string, args: ToolArgs) => void;
@@ -101,6 +104,11 @@ export class ollamaTask {
     return this;
   }
 
+  public reasoning(reasonig:Thinking) {
+    this._resoaning = reasonig;
+    return this;
+  }
+
   public onThinking(callback: (chunk: string) => void): this {
     this._onThinking = callback;
     return this;
@@ -130,7 +138,7 @@ export class ollamaTask {
         messages: this._messages,
         tools: this._tools,
         format: this._format,
-        // think: true,
+        think: this._resoaning,
         stream: true,
       });
 
