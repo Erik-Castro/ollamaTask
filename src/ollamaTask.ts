@@ -1,4 +1,5 @@
 import ollama, { type Message, type ToolCall } from "ollama";
+import { MCPBridge, type MCPServerConfig } from "./mcp/client.ts";
 
 export interface ExecutionResult {
   content: string;
@@ -51,7 +52,7 @@ export type StreamEvent =
     data: { inputTokens: number; outputTokens: number };
   };
 
-export type Thinking = true | "low" | "medium" | "high" | "max" | undefined
+export type Thinking = true | "low" | "medium" | "high" | undefined
 
 export class ollamaTask {
   private _messages: Message[] = [];
@@ -106,6 +107,21 @@ export class ollamaTask {
 
   public reasoning(reasonig:Thinking) {
     this._resoaning = reasonig;
+    return this;
+  }
+
+  public async useMCP(config: MCPServerConfig): Promise<this> {
+    const bridge = await MCPBridge.connect(config);
+    const { definitions, handlers } = await bridge.getTools();
+    this._tools = [...(this._tools ?? []), ...definitions];
+    this._handlers = [...(this._handlers ?? []), ...handlers];
+    return this;
+  }
+
+  public async useMCPServers(configs: MCPServerConfig[]): Promise<this> {
+    for (const config of configs) {
+      await this.useMCP(config);
+    }
     return this;
   }
 

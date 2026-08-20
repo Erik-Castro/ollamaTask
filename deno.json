@@ -7,6 +7,9 @@
     "test": "deno test --allow-ffi --allow-net --allow-read --allow-write"
   },
   "imports": {
-    "ollama": "npm:ollama@^0.6.3"
+    "ollama": "npm:ollama@^0.6.3",
+    "@modelcontextprotocol/sdk/server": "npm:@modelcontextprotocol/sdk@^1.12.1/server",
+    "@modelcontextprotocol/sdk/client": "npm:@modelcontextprotocol/sdk@^1.12.1/client",
+    "zod": "npm:zod@^3.24.0"
   }
 }

@@ -6,6 +6,7 @@ import {
   type ToolHandler,
   type Thinking
 } from "./ollamaTask.ts";
+import { MCPBridge, type MCPServerConfig } from "./mcp/client.ts";
 
 export interface StageConfig {
   model: string;
@@ -14,6 +15,7 @@ export interface StageConfig {
   transform?: (prev: ExecutionResult, original: string) => string;
   tools?: ToolDefinition[];
   toolHandlers?: ToolHandler[];
+  mcpServers?: MCPServerConfig[];
   format?: string | object;
   maxIterations?: number;
   onThinking?: (chunk: string) => void;
@@ -45,7 +47,7 @@ export class ollamaPipeline {
     return this;
   }
 
-  private _runStage(
+  private async _runStage(
     config: StageConfig,
     prev: ExecutionResult | null,
   ): Promise<ExecutionResult> {
@@ -68,6 +70,16 @@ export class ollamaPipeline {
 
     if (config.tools) task.tools(config.tools);
     if (config.toolHandlers) task.toolHandlers(config.toolHandlers);
+
+    if (config.mcpServers) {
+      for (const serverConfig of config.mcpServers) {
+        const bridge = await MCPBridge.connect(serverConfig);
+        const { definitions, handlers } = await bridge.getTools();
+        task.tools([...(config.tools ?? []), ...definitions]);
+        task.toolHandlers([...(config.toolHandlers ?? []), ...handlers]);
+      }
+    }
+
     if (config.format) task.format(config.format);
     if (config.maxIterations) task.maxIterations(config.maxIterations);
     if (config.onThinking) task.onThinking(config.onThinking);
