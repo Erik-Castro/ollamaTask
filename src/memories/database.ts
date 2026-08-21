@@ -74,6 +74,13 @@ export async function openDatabase(
   const path = options.path ?? "rag.db";
   const keyPath = options.keyPath ?? ".key";
   const vectorExtensionPath = options.vectorExtensionPath ?? "./bin/vector.so";
+
+  // Ensure the directory for the database file exists
+  const dir = path.substring(0, path.lastIndexOf("/"));
+  if (dir) {
+    await Deno.mkdir(dir, { recursive: true });
+  }
+
   const key = await loadOrCreateKey(keyPath);
   const db = new CipherDatabase(
     path,
