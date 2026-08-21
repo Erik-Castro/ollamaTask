@@ -14,12 +14,7 @@ import { Which } from "../src/tools/Which.ts";
 import { RunCommand } from "../src/tools/RunCommand.ts";
 import { WebSearch } from "../src/tools/WebSearch.ts";
 import { WebFetch } from "../src/tools/WebFetch.ts";
-import {
-  StateStoreDelete,
-  StateStoreGet,
-  StateStoreList,
-  StateStoreSet,
-} from "../src/tools/StateStore.ts";
+import { StateStore } from "../src/tools/StateStore.ts";
 
 const str = (v: unknown, fallback = ""): string =>
   v === undefined || v === null ? fallback : String(v);
@@ -34,6 +29,8 @@ const splitArgs = (v: unknown): string[] =>
     .split(/\s+/)
     .map((p) => p.trim())
     .filter(Boolean);
+
+const store = new StateStore();
 
 const tool = (
   name: string,
@@ -152,16 +149,16 @@ const handlers: ToolHandler[] = [
   },
   { name: "web_search", execute: (a: ToolArgs) => WebSearch(str(a.query)) },
   { name: "web_fetch", execute: (a: ToolArgs) => WebFetch(str(a.url)) },
-  { name: "state_get", execute: (a: ToolArgs) => StateStoreGet(str(a.key)) },
+  { name: "state_get", execute: (a: ToolArgs) => store.get(str(a.key)) },
   {
     name: "state_set",
-    execute: (a: ToolArgs) => StateStoreSet(str(a.key), a.value),
+    execute: (a: ToolArgs) => store.set(str(a.key), a.value),
   },
   {
     name: "state_delete",
-    execute: (a: ToolArgs) => StateStoreDelete(str(a.key)),
+    execute: (a: ToolArgs) => store.delete(str(a.key)),
   },
-  { name: "state_list", execute: () => StateStoreList() },
+  { name: "state_list", execute: () => store.list() },
 ];
 
 const safe = (
@@ -296,9 +293,9 @@ try {
   console.log("\n--- Relatório final (stage 4) ---");
   console.log(final.content);
 
-  const state = await StateStoreList();
+  const state = await store.list();
   console.log("\n--- StateStore keys ---", JSON.stringify(state));
-  const report = await StateStoreGet("report");
+  const report = await store.get("report");
   console.log("report:", JSON.stringify(report.value)?.slice(0, 300));
 } catch (error) {
   console.error("\nPipeline falhou:", error);

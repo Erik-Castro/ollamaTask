@@ -21,12 +21,7 @@ import { Which } from "../src/tools/Which.ts";
 import { RunCommand } from "../src/tools/RunCommand.ts";
 import { WebSearch } from "../src/tools/WebSearch.ts";
 import { WebFetch } from "../src/tools/WebFetch.ts";
-import {
-  StateStoreDelete,
-  StateStoreGet,
-  StateStoreList,
-  StateStoreSet,
-} from "../src/tools/StateStore.ts";
+import { StateStore } from "../src/tools/StateStore.ts";
 
 // ── helpers ──────────────────────────────────────────────
 const str = (v: unknown, fb = "") =>
@@ -37,6 +32,8 @@ const num = (v: unknown, fb: number | null = null) =>
     : Number(v);
 const splitArgs = (v: unknown) =>
   str(v).split(/\s+/).map((p) => p.trim()).filter(Boolean);
+
+const store = new StateStore();
 
 const write = (token: string) =>
   Deno.stdout.writeSync(new TextEncoder().encode(token));
@@ -140,13 +137,13 @@ const handlers: ToolHandler[] = [
   },
   { name: "web_search", execute: (a) => WebSearch(str(a.query)) },
   { name: "web_fetch", execute: (a) => WebFetch(str(a.url)) },
-  { name: "state_get", execute: (a) => StateStoreGet(str(a.key)) },
+  { name: "state_get", execute: (a) => store.get(str(a.key)) },
   {
     name: "state_set",
-    execute: (a) => StateStoreSet(str(a.key), a.value),
+    execute: (a) => store.set(str(a.key), a.value),
   },
-  { name: "state_delete", execute: (a) => StateStoreDelete(str(a.key)) },
-  { name: "state_list", execute: () => StateStoreList() },
+  { name: "state_delete", execute: (a) => store.delete(str(a.key)) },
+  { name: "state_list", execute: () => store.list() },
 ];
 
 const safeHandlers: ToolHandler[] = handlers.map((h) => ({
@@ -387,10 +384,10 @@ if (fileExists) {
   );
 }
 
-const meta = await StateStoreGet("contract_meta");
-const values = await StateStoreGet("contract_values");
-const tmp = await StateStoreGet("tmp_scratch");
-const list = await StateStoreList();
+const meta = await store.get("contract_meta");
+const values = await store.get("contract_values");
+const tmp = await store.get("tmp_scratch");
+const list = await store.list();
 
 assert("T5 state contract_meta", meta.value != null);
 assert("T6 state contract_values", values.value != null);

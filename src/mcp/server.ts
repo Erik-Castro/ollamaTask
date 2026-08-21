@@ -11,12 +11,8 @@ import { Which } from "../tools/Which.ts";
 import { RunCommand } from "../tools/RunCommand.ts";
 import { WebSearch } from "../tools/WebSearch.ts";
 import { WebFetch } from "../tools/WebFetch.ts";
-import {
-  StateStoreDelete,
-  StateStoreGet,
-  StateStoreList,
-  StateStoreSet,
-} from "../tools/StateStore.ts";
+import { StateStore, StateStoreAllTools } from "../tools/StateStore.ts";
+import type { ToolHandler } from "../ollamaTask.ts";
 
 const ListToolsRequestSchema = z.object({
   method: z.literal("tools/list"),
@@ -117,6 +113,13 @@ interface ToolDef {
   description: string;
   inputSchema: Record<string, unknown>;
 }
+
+const store = new StateStore();
+const stateTools = StateStoreAllTools(store);
+
+const stateHandlerMap = new Map<string, ToolHandler>(
+  stateTools.handlers.map((h) => [h.name, h]),
+);
 
 const TOOLS: ToolDef[] = [
   {
@@ -237,45 +240,11 @@ const TOOLS: ToolDef[] = [
       required: ["url"],
     },
   },
-  {
-    name: "state_get",
-    description: "Read a key from the persistent K-V store.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        key: { type: "string", description: "Key name" },
-      },
-      required: ["key"],
-    },
-  },
-  {
-    name: "state_set",
-    description: "Persist a value under a key in the K-V store.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        key: { type: "string", description: "Key name" },
-        value: { type: "string", description: "Value to store" },
-      },
-      required: ["key", "value"],
-    },
-  },
-  {
-    name: "state_delete",
-    description: "Delete a key from the K-V store.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        key: { type: "string", description: "Key name" },
-      },
-      required: ["key"],
-    },
-  },
-  {
-    name: "state_list",
-    description: "List all keys in the K-V store.",
-    inputSchema: { type: "object", properties: {} },
-  },
+  ...stateTools.definitions.map((d) => ({
+    name: d.function.name,
+    description: d.function.description,
+    inputSchema: d.function.parameters,
+  })),
 ];
 
 type ToolArgs = Record<string, unknown>;
@@ -284,6 +253,12 @@ async function handleToolCall(
   name: string,
   args: ToolArgs,
 ): Promise<{ type: string; text: string }[]> {
+  const stateHandler = stateHandlerMap.get(name);
+  if (stateHandler) {
+    const result = await stateHandler.execute(args);
+    return [{ type: "text", text: JSON.stringify(result) }];
+  }
+
   let result: unknown;
 
   switch (name) {
@@ -327,18 +302,6 @@ async function handleToolCall(
       break;
     case "web_fetch":
       result = await WebFetch(str(args.url));
-      break;
-    case "state_get":
-      result = await StateStoreGet(str(args.key));
-      break;
-    case "state_set":
-      result = await StateStoreSet(str(args.key), args.value);
-      break;
-    case "state_delete":
-      result = await StateStoreDelete(str(args.key));
-      break;
-    case "state_list":
-      result = await StateStoreList();
       break;
     default:
       result = { error: `Unknown tool: ${name}` };

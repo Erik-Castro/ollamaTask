@@ -549,14 +549,40 @@ await CodeSearch("export const", {
 ### StateStore
 
 Simple persisted key-value store, backed by a JSON file. Default filename is
-`data/state.json`, which lives in the gitignored `data/` folder.
+`data/state.json`, which lives in the gitignored `data/` folder. Each instance
+maintains its own cache.
 
 ```ts
-import { StateStoreGet, StateStoreSet } from "./src/tools/StateStore.ts";
+import { StateStore } from "./src/tools/StateStore.ts";
 
-await StateStoreSet("theme", "dark");
-await StateStoreGet("theme"); // { key: "theme", value: "dark" }
+const store = new StateStore();
+await store.set("theme", "dark");
+await store.get("theme"); // { key: "theme", value: "dark" }
+await store.list(); // { keys: ["theme"], count: 1 }
+await store.delete("theme"); // { key: "theme", value: true }
 ```
+
+#### Tool Factories (for ollamaTask)
+
+```ts
+import {
+  StateStore,
+  StateStoreGetTool,
+  StateStoreSetTool,
+} from "./src/tools/StateStore.ts";
+
+const store = new StateStore();
+const get = StateStoreGetTool(store);
+const set = StateStoreSetTool(store);
+
+await new ollamaTask("qwen3.5:2b")
+  .tools([get.definition, set.definition])
+  .toolHandlers([get.handler, set.handler])
+  .execute();
+```
+
+Available factories: `StateStoreGetTool`, `StateStoreSetTool`,
+`StateStoreDeleteTool`, `StateStoreListTool`, `StateStoreAllTools`.
 
 ## Examples
 
