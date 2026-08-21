@@ -1,7 +1,7 @@
 export {
   MCPBridge,
   type MCPServerConfig,
-  type StdioServerConfig,
   type RemoteServerConfig,
+  type StdioServerConfig,
 } from "./client.ts";
 export { buildServer, startServer } from "./server.ts";

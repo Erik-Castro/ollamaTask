@@ -1,5 +1,10 @@
 import ollama, { type Message, type ToolCall } from "ollama";
 import { MCPBridge, type MCPServerConfig } from "./mcp/client.ts";
+import {
+  createRAGTool,
+  type RAGConfig,
+  searchContext,
+} from "./ragIntegration.ts";
 
 export interface ExecutionResult {
   content: string;
@@ -52,7 +57,7 @@ export type StreamEvent =
     data: { inputTokens: number; outputTokens: number };
   };
 
-export type Thinking = true | "low" | "medium" | "high" | undefined
+export type Thinking = true | "low" | "medium" | "high" | undefined;
 
 export class ollamaTask {
   private _messages: Message[] = [];
@@ -61,7 +66,8 @@ export class ollamaTask {
   private _handlers?: ToolHandler[];
   private _format?: string | object;
   private _maxIterations = 10;
-  private _resoaning:Thinking = undefined
+  private _resoaning: Thinking = undefined;
+  private _ragConfig?: RAGConfig;
   private _onThinking?: (chunk: string) => void;
   private _onContent?: (chunk: string) => void;
   private _onToolCall?: (name: string, args: ToolArgs) => void;
@@ -105,8 +111,21 @@ export class ollamaTask {
     return this;
   }
 
-  public reasoning(reasonig:Thinking) {
+  public reasoning(reasonig: Thinking) {
     this._resoaning = reasonig;
+    return this;
+  }
+
+  public rag(config: RAGConfig): this {
+    this._ragConfig = config;
+    const { definition, handler } = createRAGTool(config.rag, { k: config.k });
+    const hasRagTool = this._tools?.some((t) =>
+      t.function.name === "rag_search"
+    );
+    if (!hasRagTool) {
+      this._tools = [...(this._tools ?? []), definition];
+      this._handlers = [...(this._handlers ?? []), handler];
+    }
     return this;
   }
 
@@ -148,6 +167,36 @@ export class ollamaTask {
   }
 
   private async *_streamEvents(): AsyncGenerator<StreamEvent> {
+    if (this._ragConfig) {
+      const lastUserMsg = [...this._messages]
+        .reverse()
+        .find((m) => m.role === "user");
+      if (lastUserMsg) {
+        const context = await searchContext(
+          this._ragConfig.rag,
+          lastUserMsg.content,
+          { k: this._ragConfig.k },
+        );
+        if (context) {
+          const ragPrompt = this._ragConfig.systemPrompt ??
+            "Você é um assistente que responde usando EXCLUSIVAMENTE os trechos de contexto fornecidos. Cite as fontes usadas no formato [1], [2], etc. Se a resposta não estiver no contexto, diga que não sabe.";
+          const systemIdx = this._messages.findIndex((m) =>
+            m.role === "system"
+          );
+          const contextMsg =
+            `Contexto relevante:\n${context}\n\n---\n\n${ragPrompt}`;
+          if (systemIdx >= 0) {
+            this._messages[systemIdx] = {
+              role: "system",
+              content: contextMsg,
+            };
+          } else {
+            this._messages.unshift({ role: "system", content: contextMsg });
+          }
+        }
+      }
+    }
+
     for (let i = 0; i < this._maxIterations; i++) {
       const response = await ollama.chat({
         model: this._model,
@@ -306,6 +355,18 @@ export class ollamaTask {
       if (event.type === "done") {
         input += event.data.inputTokens;
         output += event.data.outputTokens;
+      }
+    }
+
+    if (this._ragConfig?.autoIndex && fullContent) {
+      const lastUserMsg = [...this._messages]
+        .reverse()
+        .find((m) => m.role === "user");
+      if (lastUserMsg) {
+        await this._ragConfig.rag.addText(
+          `Pergunta: ${lastUserMsg.content}\nResposta: ${fullContent}`,
+          { title: "cache" },
+        );
       }
     }
 

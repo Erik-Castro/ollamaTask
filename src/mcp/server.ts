@@ -12,10 +12,10 @@ import { RunCommand } from "../tools/RunCommand.ts";
 import { WebSearch } from "../tools/WebSearch.ts";
 import { WebFetch } from "../tools/WebFetch.ts";
 import {
-  StateStoreGet,
-  StateStoreSet,
   StateStoreDelete,
+  StateStoreGet,
   StateStoreList,
+  StateStoreSet,
 } from "../tools/StateStore.ts";
 
 const ListToolsRequestSchema = z.object({
@@ -220,8 +220,7 @@ const TOOLS: ToolDef[] = [
         query: { type: "string", description: "Search query" },
         offset: {
           type: "integer",
-          description:
-            "Page offset (0=first page, 10=second, 20=third, etc.)",
+          description: "Page offset (0=first page, 10=second, 20=third, etc.)",
         },
       },
       required: ["query"],

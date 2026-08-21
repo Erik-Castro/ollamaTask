@@ -1,9 +1,5 @@
 import { Client } from "@modelcontextprotocol/sdk/client";
-import type {
-  ToolDefinition,
-  ToolHandler,
-  ToolArgs,
-} from "../ollamaTask.ts";
+import type { ToolArgs, ToolDefinition, ToolHandler } from "../ollamaTask.ts";
 
 // ── Config types ──────────────────────────────────────────────────────────────
 

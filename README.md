@@ -22,6 +22,9 @@ calling**, **structured outputs**, and **WebStreams** — all built on the
 - **Tool suite** — `src/tools/` ships ready-to-use, zero-dependency tools
   (search, web, filesystem, calculator, state, command execution) built for
   tool-calling pipelines
+- **RAG & Semantic Memory** — built-in via `src/memories/`: encrypted SQLite
+  (SQLCipher), vector KNN search (sqlite-vector), semantic chunking, and
+  multi-provider support (Ollama + OpenAI-compatible)
 
 ## Requirements
 
@@ -475,7 +478,7 @@ const final = await ollamaPipeline
 | `model`         | `string`                       | Ollama model name (required)                 |
 | `system`        | `string`                       | System prompt for this stage                 |
 | `user`          | `string`                       | Override user message (default: prev result) |
-| `transform`     | `(prev, original) => string`     | Transform previous result into next prompt  |
+| `transform`     | `(prev, original) => string`   | Transform previous result into next prompt   |
 | `tools`         | `ToolDefinition[]`             | Tool schemas for this stage                  |
 | `toolHandlers`  | `ToolHandler[]`                | Tool executor functions                      |
 | `format`        | `string \| object`             | Response format (`"json"` or JSON schema)    |
@@ -494,28 +497,28 @@ structured results. They also power `examples/pipeline-tools.ts`.
 All functions take plain options and return serializable objects, so they map
 cleanly onto `ToolDefinition`/`ToolHandler` pairs.
 
-| Module          | Function / family                           | Description                                                            |
-| --------------- | ------------------------------------------- | ---------------------------------------------------------------------- |
-| `Now.ts`        | `Now()`                                     | Current timestamp: ISO, unix, timezone, UTC offset                     |
-| `Calculator.ts` | `Calculator(expr)`                          | Evaluates arithmetic via a safe custom parser (no `eval`/`Function`)    |
-| `ListDir.ts`    | `ListDir(path = ".")`                      | Lists entries `{ name, kind }`, dirs first, sorted                     |
-| `FileRead.ts`   | `FileRead(path, { maxChars, offset })` | Reads a text file from a byte `offset` (`Deno.seek`), truncated  |
-| `FileWrite.ts`  | `FileWrite(path, content)`                 | Writes a text file, returns bytes written                              |
-| `CodeSearch.ts` | `CodeSearch(pattern, opts)`                | Regex search across files; auto backend `rg` → Deno fallback           |
-| `Which.ts`      | `Which(binary)`                            | Checks if a binary exists on `PATH` (no subprocess)                    |
-| `RunCommand.ts` | `RunCommand(cmd, args, { timeoutMs })`     | Runs a whitelisted command with timeout and output truncation           |
-| `WebSearch.ts`  | `WebSearch(query)`               | DuckDuckGo search, parses results and optional instant-answer           |
-| `WebFetch.ts`   | `WebFetch(url, { maxChars })`             | Fetches a page and extracts title + clean text                         |
-| `StateStore.ts` | `get/set/delete/list`                     | Persistent JSON K-V store (default `data/state.json`)                 |
-| `html.ts`       | helpers                                    | `stripTags`, `unescapeHtml`, `cleanText`, `extractText`, `extractTitle` |
-| `net.ts`        | helpers                                    | `BROWSER_HEADERS` + `fetchPage(url)`                                   |
+| Module          | Function / family                      | Description                                                             |
+| --------------- | -------------------------------------- | ----------------------------------------------------------------------- |
+| `Now.ts`        | `Now()`                                | Current timestamp: ISO, unix, timezone, UTC offset                      |
+| `Calculator.ts` | `Calculator(expr)`                     | Evaluates arithmetic via a safe custom parser (no `eval`/`Function`)    |
+| `ListDir.ts`    | `ListDir(path = ".")`                  | Lists entries `{ name, kind }`, dirs first, sorted                      |
+| `FileRead.ts`   | `FileRead(path, { maxChars, offset })` | Reads a text file from a byte `offset` (`Deno.seek`), truncated         |
+| `FileWrite.ts`  | `FileWrite(path, content)`             | Writes a text file, returns bytes written                               |
+| `CodeSearch.ts` | `CodeSearch(pattern, opts)`            | Regex search across files; auto backend `rg` → Deno fallback            |
+| `Which.ts`      | `Which(binary)`                        | Checks if a binary exists on `PATH` (no subprocess)                     |
+| `RunCommand.ts` | `RunCommand(cmd, args, { timeoutMs })` | Runs a whitelisted command with timeout and output truncation           |
+| `WebSearch.ts`  | `WebSearch(query)`                     | DuckDuckGo search, parses results and optional instant-answer           |
+| `WebFetch.ts`   | `WebFetch(url, { maxChars })`          | Fetches a page and extracts title + clean text                          |
+| `StateStore.ts` | `get/set/delete/list`                  | Persistent JSON K-V store (default `data/state.json`)                   |
+| `html.ts`       | helpers                                | `stripTags`, `unescapeHtml`, `cleanText`, `extractText`, `extractTitle` |
+| `net.ts`        | helpers                                | `BROWSER_HEADERS` + `fetchPage(url)`                                    |
 
 ### Calculator
 
-Evaluates `+ - * / % ^`, parentheses, constants (`pi`, `e`, `tau`) and
-functions (`sqrt`, `sin`, `cos`, `tan`, `abs`, `round`, `floor`, `ceil`,
-`log`, `ln`, `min`, `max`). Uses a recursive-descent parser — the model never
-"calculates", so results are deterministic.
+Evaluates `+ - * / % ^`, parentheses, constants (`pi`, `e`, `tau`) and functions
+(`sqrt`, `sin`, `cos`, `tan`, `abs`, `round`, `floor`, `ceil`, `log`, `ln`,
+`min`, `max`). Uses a recursive-descent parser — the model never "calculates",
+so results are deterministic.
 
 ```ts
 import { Calculator } from "./src/tools/Calculator.ts";
@@ -528,8 +531,8 @@ Calculator("2 + process.exit(1)"); // { value: null, error: "caractere inesperad
 ### `CodeSearch` with dual backends
 
 `backend: "auto"` (default) checks for `rg` via `Which()`; if available it runs
-`rg` (`--allow-run=rg` needed), otherwise it falls back to a pure-Deno walk.
-The response reports which backend ran. The `data/` directory (gitignored) is
+`rg` (`--allow-run=rg` needed), otherwise it falls back to a pure-Deno walk. The
+response reports which backend ran. The `data/` directory (gitignored) is
 excluded by default.
 
 ```ts
@@ -549,7 +552,7 @@ Simple persisted key-value store, backed by a JSON file. Default filename is
 `data/state.json`, which lives in the gitignored `data/` folder.
 
 ```ts
-import { StateStoreSet, StateStoreGet } from "./src/tools/StateStore.ts";
+import { StateStoreGet, StateStoreSet } from "./src/tools/StateStore.ts";
 
 await StateStoreSet("theme", "dark");
 await StateStoreGet("theme"); // { key: "theme", value: "dark" }
@@ -563,16 +566,21 @@ Run any example with:
 deno run --allow-net=127.0.0.1:11434 examples/<file>.ts
 ```
 
-| File                            | Feature                             |
-| ------------------------------- | ----------------------------------- |
-| `examples/basic-chat.ts`        | Basic chat with thinking model      |
-| `examples/tool-calling.ts`      | Tool calling with callbacks         |
-| `examples/web-stream.ts`        | WebStreams API                      |
-| `examples/structured-output.ts` | Structured outputs with JSON schema |
-| `examples/pipeline-usage.ts`    | Multi-model pipeline                |
-| `examples/websearch-tool.ts`    | `web_search` wired into `ollamaTask` |
-| `examples/pipeline-tools.ts`    | 4-stage pipeline using the full tool suite |
+| File                            | Feature                                                             |
+| ------------------------------- | ------------------------------------------------------------------- |
+| `examples/basic-chat.ts`        | Basic chat with thinking model                                      |
+| `examples/tool-calling.ts`      | Tool calling with callbacks                                         |
+| `examples/web-stream.ts`        | WebStreams API                                                      |
+| `examples/structured-output.ts` | Structured outputs with JSON schema                                 |
+| `examples/pipeline-usage.ts`    | Multi-model pipeline                                                |
+| `examples/websearch-tool.ts`    | `web_search` wired into `ollamaTask`                                |
+| `examples/pipeline-tools.ts`    | 4-stage pipeline using the full tool suite                          |
 | `examples/example.ts`           | Contract-generation pipeline using all tools with `FileRead` offset |
+| `examples/semantic-memory.ts`   | Semantic routing + RAG via memories                                 |
+| `examples/embedding-store.ts`   | Vector store demo via memories                                      |
+| `examples/rag-task.ts`          | Passive RAG with `.rag()` builder                                   |
+| `examples/rag-tool.ts`          | Agentic RAG with `RAGSearchTool` tool                               |
+| `examples/rag-pipeline.ts`      | RAG with `.ragStage()` pipeline stage                               |
 
 The `examples/pipeline-tools.ts` example needs permission flags beyond the
 Ollama host because it touches network, filesystem, environment and a partial
@@ -581,6 +589,14 @@ Ollama host because it touches network, filesystem, environment and a partial
 ```bash
 deno run --allow-net --allow-env --allow-read --allow-write --allow-run \
   examples/pipeline-tools.ts
+```
+
+The RAG examples (`rag-task.ts`, `rag-tool.ts`, `rag-pipeline.ts`) need
+additional permissions for SQLite and the vector extension:
+
+```bash
+deno run --allow-net --allow-env --allow-read --allow-write --allow-ffi --allow-sys \
+  examples/rag-task.ts
 ```
 
 ## Running with a Different Host
@@ -596,6 +612,116 @@ import ollama from "ollama";
 
 // Or configure in code (create a custom client)
 const customOllama = new ollama.Ollama({ host: "http://my-server:11434" });
+```
+
+## RAG & Semantic Memory
+
+Built-in RAG capabilities via `src/memories/`:
+
+- **Encrypted storage** — SQLite with SQLCipher encryption
+- **Vector search** — KNN cosine similarity via sqlite-vector extension
+- **Semantic chunking** — automatic text splitting by paragraphs/sections
+- **Multi-provider** — Ollama and OpenAI-compatible endpoints
+
+### Direct RAG Usage
+
+```ts
+import { RAG } from "./src/memories/rag.ts";
+
+const rag = await RAG.create({ provider: "ollama" });
+await rag.addText("Your document content...", { title: "Doc" });
+const { answer, sources } = await rag.query("Your question?");
+```
+
+### RAG Passivo com ollamaTask
+
+Use `.rag()` para buscar contexto automaticamente antes de executar:
+
+```ts
+import { ollamaTask } from "./src/ollamaTask.ts";
+import { RAG } from "./src/memories/rag.ts";
+
+const rag = await RAG.create();
+
+const result = await (await new ollamaTask("qwen3.5:2b")
+  .rag({ rag, k: 3 })
+  .system("Você é um assistente útil.")
+  .user("Como funciona a criptografia?")
+  .onContent((chunk) => process.stdout.write(chunk))).execute();
+```
+
+| Opção          | Tipo      | Descrição                                 |
+| -------------- | --------- | ----------------------------------------- |
+| `rag`          | `RAG`     | Instância RAG (obrigatório)               |
+| `k`            | `number`  | Top-k para busca (padrão: 5)              |
+| `systemPrompt` | `string`  | Prompt customizado com contexto           |
+| `autoIndex`    | `boolean` | Indexar pergunta+resposta automaticamente |
+| `minScore`     | `number`  | Threshold para cache semântico            |
+
+### RAG Agentic com Tool Calling
+
+Use `RAGSearchTool` para que o modelo decida quando buscar:
+
+```ts
+import { ollamaTask } from "./src/ollamaTask.ts";
+import { RAG } from "./src/memories/rag.ts";
+import { RAGSearchTool } from "./src/tools/RAGSearch.ts";
+
+const rag = await RAG.create();
+const { definition, handler } = RAGSearchTool(rag, { k: 3 });
+
+const result = await new ollamaTask("qwen3.5:2b")
+  .system("Use rag_search para buscar informações antes de responder.")
+  .user("Como funciona o SQLite?")
+  .tools([definition])
+  .toolHandlers([handler])
+  .onToolCall((name, args) =>
+    console.log(`🔧 ${name}(${JSON.stringify(args)})`)
+  )
+  .execute();
+```
+
+### RAG com ollamaPipeline
+
+Use `.ragStage()` para estágios com contexto RAG automático:
+
+```ts
+import { ollamaPipeline } from "./src/ollamaPipeline.ts";
+import { RAG } from "./src/memories/rag.ts";
+
+const rag = await RAG.create();
+
+const results = await ollamaPipeline
+  .create("Explique como funciona o sistema")
+  .ragStage({
+    model: "qwen3.5:2b",
+    rag,
+    k: 3,
+    system: "Analise o contexto encontrado.",
+    onContent: (c) => process.stdout.write(c),
+  })
+  .then({
+    model: "qwen3.5:2b",
+    system: "Gere uma resposta completa.",
+    onContent: (c) => process.stdout.write(c),
+  })
+  .execute();
+```
+
+Também é possível usar RAG no `transform` de qualquer estágio:
+
+```ts
+const results = await ollamaPipeline
+  .create("Pergunta do usuário")
+  .stage({
+    model: "qwen3.5:2b",
+    transform: async (prev, original) => {
+      const hits = await rag.search(original, { k: 3 });
+      const context = hits.map((h) => `- ${h.content}`).join("\n");
+      return `Contexto:\n${context}\n\nPergunta: ${original}`;
+    },
+  })
+  .execute();
 ```
 
 ## License

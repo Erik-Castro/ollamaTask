@@ -1,18 +1,42 @@
 import {
   type ExecutionResult,
   ollamaTask,
+  type Thinking,
   type ToolArgs,
   type ToolDefinition,
   type ToolHandler,
-  type Thinking
 } from "./ollamaTask.ts";
 import { MCPBridge, type MCPServerConfig } from "./mcp/client.ts";
+import type { RAG } from "./memories/rag.ts";
+import { createRAGTool, searchContext } from "./ragIntegration.ts";
 
 export interface StageConfig {
   model: string;
   system?: string;
   user?: string;
-  transform?: (prev: ExecutionResult, original: string) => string;
+  transform?: (
+    prev: ExecutionResult,
+    original: string,
+  ) => string | Promise<string>;
+  tools?: ToolDefinition[];
+  toolHandlers?: ToolHandler[];
+  mcpServers?: MCPServerConfig[];
+  format?: string | object;
+  maxIterations?: number;
+  onThinking?: (chunk: string) => void;
+  onContent?: (chunk: string) => void;
+  onToolCall?: (name: string, args: ToolArgs) => void;
+  onToolResult?: (name: string, args: ToolArgs, result: unknown) => void;
+  think?: Thinking;
+}
+
+export interface RAGStageConfig {
+  model: string;
+  rag: RAG;
+  k?: number;
+  system?: string;
+  user?: string;
+  autoIndex?: boolean;
   tools?: ToolDefinition[];
   toolHandlers?: ToolHandler[];
   mcpServers?: MCPServerConfig[];
@@ -57,7 +81,7 @@ export class ollamaPipeline {
 
     let userMessage: string;
     if (prev && config.transform) {
-      userMessage = config.transform(prev, this._prompt);
+      userMessage = await config.transform(prev, this._prompt);
     } else if (config.user) {
       userMessage = config.user;
     } else if (prev) {
@@ -89,6 +113,37 @@ export class ollamaPipeline {
     if (config.think) task.reasoning(config.think);
 
     return task.execute();
+  }
+
+  public ragStage(config: RAGStageConfig): this {
+    const { rag, k, autoIndex, ...stageConfig } = config;
+    const tools = [...(config.tools ?? [])];
+    const handlers = [...(config.toolHandlers ?? [])];
+
+    if (autoIndex) {
+      const { definition, handler } = createRAGTool(rag, { k });
+      const hasRagTool = tools.some((t) => t.function.name === "rag_search");
+      if (!hasRagTool) {
+        tools.push(definition);
+        handlers.push(handler);
+      }
+    }
+
+    this._stages.push({
+      ...stageConfig,
+      tools,
+      toolHandlers: handlers,
+      transform: async (_prev, original) => {
+        const context = await searchContext(rag, original, { k });
+        const ragPrompt = config.system ??
+          "Você é um assistente que responde usando EXCLUSIVAMENTE os trechos de contexto fornecidos. Cite as fontes usadas no formato [1], [2], etc.";
+        if (context) {
+          return `Contexto relevante:\n${context}\n\n---\n\n${ragPrompt}\n\nPergunta: ${original}`;
+        }
+        return original;
+      },
+    });
+    return this;
   }
 
   public async execute(): Promise<ExecutionResult[]> {

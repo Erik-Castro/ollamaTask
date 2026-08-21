@@ -5,9 +5,7 @@
  *   deno run --allow-net examples/mcp-remote.ts [model]
  */
 
-import {
-  ollamaTask,
-} from "../src/ollamaTask.ts";
+import { ollamaTask } from "../src/ollamaTask.ts";
 import { MCPBridge } from "../src/mcp/client.ts";
 
 const EXA_URL = "https://mcp.exa.ai/mcp";
@@ -43,8 +41,9 @@ const result = await new ollamaTask(model)
     console.log(`\n🔧 ${name}(${JSON.stringify(args)})`);
   })
   .onToolResult((name, _args, res) => {
-    const text =
-      typeof res === "string" ? res.slice(0, 200) : JSON.stringify(res).slice(0, 200);
+    const text = typeof res === "string"
+      ? res.slice(0, 200)
+      : JSON.stringify(res).slice(0, 200);
     console.log(`\n📦 ${name} → ${text}...`);
   })
   .execute();

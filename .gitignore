@@ -2,3 +2,6 @@
 .codegraph/
 deno.lock
 data/
+*.db
+.key
+.env

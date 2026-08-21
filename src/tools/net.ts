@@ -2,7 +2,8 @@
 // being blocked by strict sites.
 
 const COMMON_HEADERS = {
-  "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
+  "User-Agent":
+    "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
   "Accept-Language": "pt-BR",
   "Referer": "https://html.duckduckgo.com/",
