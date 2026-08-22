@@ -107,20 +107,46 @@ const safeHandlers: ToolHandler[] = handlers.map((h) => ({
 }));
 
 const EXA_URL = "https://mcp.exa.ai/mcp";
-console.log("Connecting to Exa MCP server...");
-const mcpBridge = await MCPBridge.connect({
-  type: "remote",
-  url: EXA_URL,
-});
-const { definitions: mcpDefinitions, handlers: mcpHandlers } =
-  mcpBridge.getTools();
-console.log(`Found ${mcpDefinitions.length} MCP tools:`);
-for (const d of mcpDefinitions) {
-  console.log(`  - ${d.function.name}: ${d.function.description}`);
+
+async function connectMCP(url: string, retries = 3): Promise<{
+  bridge: MCPBridge | null;
+  definitions: ToolDefinition[];
+  handlers: ToolHandler[];
+}> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      console.log(
+        `Connecting to Exa MCP server (attempt ${attempt}/${retries})...`,
+      );
+      const bridge = await MCPBridge.connect({ type: "remote", url });
+      const { definitions, handlers } = bridge.getTools();
+      console.log(`Found ${definitions.length} MCP tools:`);
+      for (const d of definitions) {
+        console.log(`  - ${d.function.name}: ${d.function.description}`);
+      }
+      return { bridge, definitions, handlers };
+    } catch (error) {
+      console.error(
+        `MCP connection attempt ${attempt} failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      if (attempt < retries) {
+        console.log(`Retrying in 2s...`);
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+  }
+  console.warn(
+    "⚠️  MCP connection failed after all attempts. Continuing without MCP tools.",
+  );
+  return { bridge: null, definitions: [], handlers: [] };
 }
 
-const ALL_DEFINITIONS = [...ALL_TOOLS, ...mcpDefinitions];
-const ALL_HANDLERS = [...safeHandlers, ...mcpHandlers];
+const mcp = await connectMCP(EXA_URL);
+
+const ALL_DEFINITIONS = [...ALL_TOOLS, ...mcp.definitions];
+const ALL_HANDLERS = [...safeHandlers, ...mcp.handlers];
 
 const pick = (...names: string[]) =>
   ALL_DEFINITIONS.filter((t) => names.includes(t.function.name));
@@ -128,8 +154,6 @@ const pick = (...names: string[]) =>
 const pickAll = () => ALL_DEFINITIONS;
 
 const query = Deno.args[0]?.trim();
-/*console.log("[DEBUG]",query);
-Deno.exit(0);*/
 if (!query) {
   console.error('Uso: deep-research-academic <"consulta">');
   Deno.exit(1);
@@ -360,7 +384,9 @@ SAÍDA EXCLUSIVA
       "claims": [
         {
           "text": "...",
-          "evidence": "..."
+          "evidence": "...",
+          "direct_quote": "... ou null se não houver citação textual",
+          "confidence": "verified | inferred | uncertain"
         }
       ],
       "limitations": ["..."]
@@ -369,7 +395,8 @@ SAÍDA EXCLUSIVA
 }
 
 Valores permitidos para access_status: ok, unavailable, insufficient.
-Valores permitidos para source_type: academic, institutional, governmental, museum_archive, reference, secondary, news, other.`,
+Valores permitidos para source_type: academic, institutional, governmental, museum_archive, reference, secondary, news, other.
+Valores permitidos para confidence: verified (dados diretos da fonte), inferred (inferência do autor), uncertain (informação duvidosa ou não verificável).`,
     transform: (previous) =>
       `FONTES RECUPERADAS:\n${previous.content}\n\nAnalise cada fonte usando a ferramenta de obtenção de conteúdo.`,
     tools: pickAll(),
@@ -399,8 +426,13 @@ Valores permitidos para source_type: academic, institutional, governmental, muse
                   properties: {
                     text: { type: "string" },
                     evidence: { type: "string" },
+                    direct_quote: { type: "string" },
+                    confidence: {
+                      type: "string",
+                      enum: ["verified", "inferred", "uncertain"],
+                    },
                   },
-                  required: ["text", "evidence"],
+                  required: ["text", "evidence", "direct_quote", "confidence"],
                 },
               },
               limitations: { type: "array", items: { type: "string" } },
@@ -464,6 +496,8 @@ REGRAS
 - Se o conjunto já for bom, apenas preserve-o e não invente lacunas artificiais.
 - Ao identificar lacunas, priorize a busca por dados quantitativos, datas precisas, discografias, charts e fontes primárias ou institucionais.
 - Se o inventário atual estiver dominado por afirmações genéricas, trate isso como lacuna de densidade factual e gere consultas específicas para números, datas e nomes de obras.
+- BUDGET MÁXIMO: Não execute mais de 3 rodadas de busca. Se após 3 rodadas ainda houver lacunas críticas, registre-as explicitamente em "gaps" e prossiga.
+- Prioridade de lacunas: (1) dados quantitativos, (2) fontes primárias, (3) confirmação independente.
 
 CRITÉRIO
 Tente finalizar com pelo menos 5 fontes relevantes e 8 claims factuais, quando o tema permitir. Se o tema não permitir, mantenha todas as evidências válidas encontradas e registre a limitação.
@@ -602,15 +636,36 @@ SAÍDA EXCLUSIVA
           items: {
             type: "object",
             properties: {
-              claim: { type: "string", description: "afirmação específica, preferencialmente com data, número ou nome próprio" },
+              claim: {
+                type: "string",
+                description:
+                  "afirmação específica, preferencialmente com data, número ou nome próprio",
+              },
               sources: { type: "array", items: { type: "string" } },
               support: { type: "string" },
               basis: { type: "string" },
-              evidence_type: { type: "string", enum: ["primary", "secondary", "tertiary"] },
-              nature: { type: "string", enum: ["quantitative", "qualitative", "mixed"] },
-              independence: { type: "string", enum: ["independent", "likely_derivative", "unknown"] },
+              evidence_type: {
+                type: "string",
+                enum: ["primary", "secondary", "tertiary"],
+              },
+              nature: {
+                type: "string",
+                enum: ["quantitative", "qualitative", "mixed"],
+              },
+              independence: {
+                type: "string",
+                enum: ["independent", "likely_derivative", "unknown"],
+              },
             },
-            required: ["claim", "sources", "support", "basis", "evidence_type", "nature", "independence"],
+            required: [
+              "claim",
+              "sources",
+              "support",
+              "basis",
+              "evidence_type",
+              "nature",
+              "independence",
+            ],
           },
         },
         consensus: { type: "array", items: { type: "string" } },
@@ -806,12 +861,33 @@ REGRAS
 SALVE SOBRE O MESMO ARQUIVO
 "${OUTPUT_FILE}"
 
+Ao final da revisão, gere um relatório de qualidade e adicione ao final do artigo (após as footnotes), separado por uma linha horizontal:
+
+---
+**Pipeline:** deep-research-academic v1.0
+**Modelo:** [modelo utilizado]
+**Fontes encontradas:** [número]
+**Fontes utilizadas:** [número]
+**Claims extraídos:** [número]
+**Claims no artigo:** [número]
+**Footnotes:** [número]
+**Densidade factual:** [0-100, estimativa de quantos claims têm dados concretos]
+**Data de geração:** [timestamp ISO]
+
 SAÍDA EXCLUSIVA
 {
   "revised": true,
-  "path": "${OUTPUT_FILE}"
+  "path": "${OUTPUT_FILE}",
+  "quality_report": {
+    "sources_found": 0,
+    "sources_used": 0,
+    "claims_extracted": 0,
+    "claims_in_article": 0,
+    "footnotes": 0,
+    "factual_density_score": 0
+  }
 }`,
-    transform: (previous) =>
+    transform: (_previous) =>
       `ARTIGO GERADO EM:\n${OUTPUT_FILE}\n\nLEIA O ARQUIVO, REVISE E SOBRESCREVA COM A VERSÃO FINAL.`,
     tools: pick("file_read", "file_write"),
     toolHandlers: ALL_HANDLERS,
@@ -820,11 +896,30 @@ SAÍDA EXCLUSIVA
       properties: {
         revised: { type: "boolean" },
         path: { type: "string" },
+        quality_report: {
+          type: "object",
+          properties: {
+            sources_found: { type: "integer" },
+            sources_used: { type: "integer" },
+            claims_extracted: { type: "integer" },
+            claims_in_article: { type: "integer" },
+            footnotes: { type: "integer" },
+            factual_density_score: { type: "integer" },
+          },
+          required: [
+            "sources_found",
+            "sources_used",
+            "claims_extracted",
+            "claims_in_article",
+            "footnotes",
+            "factual_density_score",
+          ],
+        },
       },
-      required: ["revised", "path"],
+      required: ["revised", "path", "quality_report"],
     },
     maxIterations: 7,
-    think: "max",
+    think: "high",
     onThinking: gray,
     onToolCall,
     onToolResult,
@@ -844,4 +939,6 @@ results.forEach((result, index) => {
   );
 });
 
-await mcpBridge.close();
+if (mcp.bridge) {
+  await mcp.bridge.close();
+}
