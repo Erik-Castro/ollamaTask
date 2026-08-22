@@ -24,10 +24,9 @@ import type {
   ToolDefinition,
   ToolHandler,
 } from "../src/ollamaTask.ts";
+import { MCPBridge } from "../src/mcp/client.ts";
 import { FileRead } from "../src/tools/FileRead.ts";
 import { FileWrite } from "../src/tools/FileWrite.ts";
-import { WebFetch } from "../src/tools/WebFetch.ts";
-import { WebSearch } from "../src/tools/WebSearch.ts";
 
 const str = (v: unknown, fallback = "") =>
   v === undefined || v === null ? fallback : String(v);
@@ -59,28 +58,6 @@ const tool = (
 
 const ALL_TOOLS: ToolDefinition[] = [
   tool(
-    "web_search",
-    "Pesquisa a web e retorna resultados relevantes para uma consulta.",
-    {
-      query: {
-        type: "string",
-        description: "Consulta de pesquisa objetiva.",
-      },
-    },
-    ["query"],
-  ),
-  tool(
-    "web_fetch",
-    "Obtém o conteúdo textual de uma URL para análise.",
-    {
-      url: {
-        type: "string",
-        description: "URL obtida durante a pesquisa.",
-      },
-    },
-    ["url"],
-  ),
-  tool(
     "file_read",
     "Lê um arquivo de texto existente.",
     {
@@ -102,8 +79,6 @@ const ALL_TOOLS: ToolDefinition[] = [
 ];
 
 const handlers: ToolHandler[] = [
-  { name: "web_search", execute: (a) => WebSearch(str(a.query)) },
-  { name: "web_fetch", execute: (a) => WebFetch(str(a.url)) },
   {
     name: "file_read",
     execute: (a) =>
@@ -131,8 +106,26 @@ const safeHandlers: ToolHandler[] = handlers.map((h) => ({
   },
 }));
 
+const EXA_URL = "https://mcp.exa.ai/mcp";
+console.log("Connecting to Exa MCP server...");
+const mcpBridge = await MCPBridge.connect({
+  type: "remote",
+  url: EXA_URL,
+});
+const { definitions: mcpDefinitions, handlers: mcpHandlers } =
+  mcpBridge.getTools();
+console.log(`Found ${mcpDefinitions.length} MCP tools:`);
+for (const d of mcpDefinitions) {
+  console.log(`  - ${d.function.name}: ${d.function.description}`);
+}
+
+const ALL_DEFINITIONS = [...ALL_TOOLS, ...mcpDefinitions];
+const ALL_HANDLERS = [...safeHandlers, ...mcpHandlers];
+
 const pick = (...names: string[]) =>
-  ALL_TOOLS.filter((t) => names.includes(t.function.name));
+  ALL_DEFINITIONS.filter((t) => names.includes(t.function.name));
+
+const pickAll = () => ALL_DEFINITIONS;
 
 const query = Deno.args[0]?.trim();
 if (!query) {
@@ -201,7 +194,7 @@ SAÍDA EXCLUSIVA
   "queries": ["...", "..."]
 }`,
     tools: [],
-    toolHandlers: safeHandlers,
+    toolHandlers: ALL_HANDLERS,
     format: {
       type: "object",
       properties: {
@@ -266,8 +259,8 @@ SAÍDA EXCLUSIVA
 }`,
     transform: (previous) =>
       `CONSULTAS PLANEJADAS:\n${previous.content}\n\nFaça a recuperação das fontes agora.`,
-    tools: pick("web_search"),
-    toolHandlers: safeHandlers,
+    tools: pickAll(),
+    toolHandlers: ALL_HANDLERS,
     format: {
       type: "object",
       properties: {
@@ -305,7 +298,7 @@ OBJETIVO
 Ler as fontes recuperadas e extrair informações factuais e atribuíveis que possam sustentar um artigo posterior.
 
 PARA CADA URL
-1. Use web_fetch.
+1. Use a ferramenta de obtenção de conteúdo para ler a página.
 2. Identifique título, autor(es), data/ano e instituição quando essas informações estiverem presentes.
 3. Classifique a fonte como academic, institutional, governmental, museum_archive, reference, secondary, news ou other.
 4. Determine se a fonte é realmente relevante.
@@ -321,6 +314,14 @@ REGRAS CRÍTICAS
 - Não invente metadados ausentes.
 - Preserve números, datas, nomes e qualificadores da fonte.
 - Separe claramente claim de interpretação do agente.
+- EXIGÊNCIAS DE DENSIDADE FACTUAL:
+  - Sempre que a página contiver, extraia e registre:
+    • datas concretas (dia/mês/ano ou pelo menos ano);
+    • números (vendas, streams, posições em charts, quantidades de shows, tiragens etc.);
+    • nomes próprios de álbuns, singles, produtores, integrantes, gravadoras, prêmios;
+    • citações textuais curtas (entre aspas) quando a fonte trouxer afirmações relevantes.
+  - Prefira claims específicos e verificáveis a afirmações genéricas ("ascensão meteórica", "grande sucesso", "impacto nacional").
+  - Se a página trouxer apenas generalidades, registre isso explicitamente em limitations e reduza o número de claims.
 
 IMPORTANTE
 Quando uma fonte contém evidência relevante, registre-a mesmo que seja secundária. A etapa posterior avaliará sua força.
@@ -353,9 +354,9 @@ SAÍDA EXCLUSIVA
 Valores permitidos para access_status: ok, unavailable, insufficient.
 Valores permitidos para source_type: academic, institutional, governmental, museum_archive, reference, secondary, news, other.`,
     transform: (previous) =>
-      `FONTES RECUPERADAS:\n${previous.content}\n\nAnalise cada fonte usando web_fetch.`,
-    tools: pick("web_fetch"),
-    toolHandlers: safeHandlers,
+      `FONTES RECUPERADAS:\n${previous.content}\n\nAnalise cada fonte usando a ferramenta de obtenção de conteúdo.`,
+    tools: pickAll(),
+    toolHandlers: ALL_HANDLERS,
     format: {
       type: "object",
       properties: {
@@ -434,7 +435,7 @@ TAREFA
 3. Identifique fontes que falharam no acesso.
 4. Identifique claims importantes apoiados por apenas uma fonte quando uma confirmação independente seria plausível.
 5. Gere novas buscas para cobrir as lacunas.
-6. Faça web_search e, para novas URLs promissoras, web_fetch.
+6. Use a ferramenta de busca para pesquisar e, para novas URLs promissoras, use a ferramenta de obtenção de conteúdo.
 7. Adicione as novas fontes ao inventário.
 
 REGRAS
@@ -444,6 +445,8 @@ REGRAS
 - Não faça buscas infinitas: concentre-se nas lacunas mais importantes.
 - Uma pesquisa é 'insuficiente' somente quando ainda falta suporte relevante depois desta etapa de recuperação.
 - Se o conjunto já for bom, apenas preserve-o e não invente lacunas artificiais.
+- Ao identificar lacunas, priorize a busca por dados quantitativos, datas precisas, discografias, charts e fontes primárias ou institucionais.
+- Se o inventário atual estiver dominado por afirmações genéricas, trate isso como lacuna de densidade factual e gere consultas específicas para números, datas e nomes de obras.
 
 CRITÉRIO
 Tente finalizar com pelo menos 5 fontes relevantes e 8 claims factuais, quando o tema permitir. Se o tema não permitir, mantenha todas as evidências válidas encontradas e registre a limitação.
@@ -452,8 +455,8 @@ SAÍDA EXCLUSIVA
 Retorne o inventário consolidado, incluindo fontes antigas e novas, no mesmo formato do estágio anterior.`,
     transform: (previous) =>
       `INVENTÁRIO DE EVIDÊNCIAS:\n${previous.content}\n\nFaça uma auditoria de cobertura e recupere as lacunas relevantes.`,
-    tools: pick("web_search", "web_fetch"),
-    toolHandlers: safeHandlers,
+    tools: pickAll(),
+    toolHandlers: ALL_HANDLERS,
     format: {
       type: "object",
       properties: {
@@ -533,6 +536,14 @@ PROCEDIMENTO
 6. Distinga evidência direta de inferência histórica ou interpretativa.
 7. Nunca use 'ausência de evidência' para concluir 'evidência de ausência'.
 
+CLASSIFICAÇÃO OBRIGATÓRIA DE CADA FINDING
+Para cada finding, além de support, classifique:
+- evidence_type: "primary" | "secondary" | "tertiary"
+- nature: "quantitative" | "qualitative" | "mixed"
+- independence: "independent" | "likely_derivative" | "unknown"
+
+Evite findings que sejam apenas reformulações genéricas. Prefira claims que contenham data, número, nome próprio ou citação atribuível.
+
 FORÇA DO SUPORTE
 Use high, medium, low ou uncertain.
 Considere qualidade aparente, natureza da fonte, consistência e independência das fontes, sem inventar critérios não disponíveis.
@@ -561,7 +572,7 @@ SAÍDA EXCLUSIVA
     transform: (previous) =>
       `INVENTÁRIO CONSOLIDADO:\n${previous.content}\n\nProduza agora a síntese crítica.`,
     tools: [],
-    toolHandlers: safeHandlers,
+    toolHandlers: ALL_HANDLERS,
     format: {
       type: "object",
       properties: {
@@ -572,12 +583,15 @@ SAÍDA EXCLUSIVA
           items: {
             type: "object",
             properties: {
-              claim: { type: "string" },
+              claim: { type: "string", description: "afirmação específica, preferencialmente com data, número ou nome próprio" },
               sources: { type: "array", items: { type: "string" } },
               support: { type: "string" },
               basis: { type: "string" },
+              evidence_type: { type: "string", enum: ["primary", "secondary", "tertiary"] },
+              nature: { type: "string", enum: ["quantitative", "qualitative", "mixed"] },
+              independence: { type: "string", enum: ["independent", "likely_derivative", "unknown"] },
             },
-            required: ["claim", "sources", "support", "basis"],
+            required: ["claim", "sources", "support", "basis", "evidence_type", "nature", "independence"],
           },
         },
         consensus: { type: "array", items: { type: "string" } },
@@ -666,9 +680,16 @@ REGRAS DE CONTEÚDO
 8. Não substitua fatos por generalidades introdutórias.
 9. Preserve números, datas, lugares, nomes e processos quando suportados pelas fontes.
 10. Evite preencher espaço com prosa genérica.
+11. A seção Resultados deve privilegiar densidade factual. Inclua o máximo possível de:
+    - datas concretas;
+    - números (vendas, streams, posições, quantidades);
+    - nomes de obras, pessoas, instituições e eventos;
+    - citações curtas entre aspas quando suportadas pelas fontes.
+12. Evite frases abstratas ou retóricas do tipo "ascensão meteórica", "estratégia comercial agressiva", "marco da música nordestina" sem que imediatamente em seguida apareça o dado ou a fonte que as sustenta.
+13. Se um finding da síntese for genérico, reformule-o na redação de forma mais precisa ou rebaixe seu peso, em vez de amplificá-lo com linguagem enfeitada.
 
 CRITÉRIO DE QUALIDADE
-O artigo deve responder à pergunta usando a maior quantidade possível de conteúdo factual sustentado pelo inventário e pela síntese, mantendo linguagem acadêmica.
+Priorize substância factual sobre fluência retórica. Um parágrafo com três dados concretos é preferível a um parágrafo eloquente sem números, datas ou nomes próprios. O artigo deve responder à pergunta usando a maior quantidade possível de conteúdo factual sustentado pelo inventário e pela síntese, mantendo linguagem acadêmica.
 
 SALVE O TEXTO COMPLETO COM file_write EM:
 "${OUTPUT_FILE}"
@@ -681,7 +702,7 @@ RETORNE EXCLUSIVAMENTE:
     transform: (previous) =>
       `SÍNTESE DE EVIDÊNCIAS:\n${previous.content}\n\nRedija o artigo acadêmico completo. Preserve os findings e seus IDs de fonte.`,
     tools: pick("file_write"),
-    toolHandlers: safeHandlers,
+    toolHandlers: ALL_HANDLERS,
     format: {
       type: "object",
       properties: {
@@ -741,7 +762,7 @@ SAÍDA EXCLUSIVA
     transform: (previous) =>
       `ARTIGO GERADO EM:\n${OUTPUT_FILE}\n\nLEIA O ARQUIVO, REVISE E SOBRESCREVA COM A VERSÃO FINAL.`,
     tools: pick("file_read", "file_write"),
-    toolHandlers: safeHandlers,
+    toolHandlers: ALL_HANDLERS,
     format: {
       type: "object",
       properties: {
@@ -770,3 +791,5 @@ results.forEach((result, index) => {
       `${result.toolCalls.length} chamadas de ferramentas`,
   );
 });
+
+await mcpBridge.close();
