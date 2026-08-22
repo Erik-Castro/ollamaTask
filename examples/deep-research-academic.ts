@@ -27,6 +27,11 @@ import type {
 import { MCPBridge } from "../src/mcp/client.ts";
 import { FileRead } from "../src/tools/FileRead.ts";
 import { FileWrite } from "../src/tools/FileWrite.ts";
+import { z } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
+
+const zodFormat = <T extends z.ZodType>(schema: T) =>
+  zodToJsonSchema(schema, { target: "openApi3" }) as Record<string, unknown>;
 
 const str = (v: unknown, fallback = "") =>
   v === undefined || v === null ? fallback : String(v);
@@ -221,15 +226,12 @@ SAÍDA EXCLUSIVA
 }`,
     tools: [],
     toolHandlers: ALL_HANDLERS,
-    format: {
-      type: "object",
-      properties: {
-        queries: { type: "array", items: { type: "string" } },
-      },
-      required: ["queries"],
-    },
+    format: zodFormat(z.object({
+      queries: z.array(z.string()),
+    })),
     maxIterations: 2,
     onThinking: gray,
+    onContent: (chunk) => writeChunk(chunk),
     onToolCall,
     onToolResult,
     think: true,
@@ -287,25 +289,15 @@ SAÍDA EXCLUSIVA
       `CONSULTAS PLANEJADAS:\n${previous.content}\n\nFaça a recuperação das fontes agora.`,
     tools: pickAll(),
     toolHandlers: ALL_HANDLERS,
-    format: {
-      type: "object",
-      properties: {
-        sources: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              url: { type: "string" },
-              reason: { type: "string" },
-            },
-            required: ["url", "reason"],
-          },
-        },
-      },
-      required: ["sources"],
-    },
+    format: zodFormat(z.object({
+      sources: z.array(z.object({
+        url: z.string(),
+        reason: z.string(),
+      })),
+    })),
     maxIterations: 18,
     onThinking: gray,
+    onContent: (chunk) => writeChunk(chunk),
     onToolCall,
     onToolResult,
     think: true,
@@ -401,63 +393,30 @@ Valores permitidos para confidence: verified (dados diretos da fonte), inferred 
       `FONTES RECUPERADAS:\n${previous.content}\n\nAnalise cada fonte usando a ferramenta de obtenção de conteúdo.`,
     tools: pickAll(),
     toolHandlers: ALL_HANDLERS,
-    format: {
-      type: "object",
-      properties: {
-        sources: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              id: { type: "string" },
-              url: { type: "string" },
-              title: { type: "string" },
-              authors: { type: "array", items: { type: "string" } },
-              year: { type: "string" },
-              institution: { type: "string" },
-              source_type: { type: "string" },
-              relevant: { type: "boolean" },
-              access_status: { type: "string" },
-              summary: { type: "string" },
-              claims: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    text: { type: "string" },
-                    evidence: { type: "string" },
-                    direct_quote: { type: "string" },
-                    confidence: {
-                      type: "string",
-                      enum: ["verified", "inferred", "uncertain"],
-                    },
-                  },
-                  required: ["text", "evidence", "direct_quote", "confidence"],
-                },
-              },
-              limitations: { type: "array", items: { type: "string" } },
-            },
-            required: [
-              "id",
-              "url",
-              "title",
-              "authors",
-              "year",
-              "institution",
-              "source_type",
-              "relevant",
-              "access_status",
-              "summary",
-              "claims",
-              "limitations",
-            ],
-          },
-        },
-      },
-      required: ["sources"],
-    },
+    format: zodFormat(z.object({
+      sources: z.array(z.object({
+        id: z.string(),
+        url: z.string(),
+        title: z.string(),
+        authors: z.array(z.string()),
+        year: z.string(),
+        institution: z.string(),
+        source_type: z.string(),
+        relevant: z.boolean(),
+        access_status: z.string(),
+        summary: z.string(),
+        claims: z.array(z.object({
+          text: z.string(),
+          evidence: z.string(),
+          direct_quote: z.string(),
+          confidence: z.enum(["verified", "inferred", "uncertain"]),
+        })),
+        limitations: z.array(z.string()),
+      })),
+    })),
     maxIterations: 24,
     onThinking: gray,
+    onContent: (chunk) => writeChunk(chunk),
     onToolCall,
     onToolResult,
     think: true,
@@ -508,58 +467,30 @@ Retorne o inventário consolidado, incluindo fontes antigas e novas, no mesmo fo
       `INVENTÁRIO DE EVIDÊNCIAS:\n${previous.content}\n\nFaça uma auditoria de cobertura e recupere as lacunas relevantes.`,
     tools: pickAll(),
     toolHandlers: ALL_HANDLERS,
-    format: {
-      type: "object",
-      properties: {
-        sources: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              id: { type: "string" },
-              url: { type: "string" },
-              title: { type: "string" },
-              authors: { type: "array", items: { type: "string" } },
-              year: { type: "string" },
-              institution: { type: "string" },
-              source_type: { type: "string" },
-              relevant: { type: "boolean" },
-              access_status: { type: "string" },
-              summary: { type: "string" },
-              claims: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    text: { type: "string" },
-                    evidence: { type: "string" },
-                  },
-                  required: ["text", "evidence"],
-                },
-              },
-              limitations: { type: "array", items: { type: "string" } },
-            },
-            required: [
-              "id",
-              "url",
-              "title",
-              "authors",
-              "year",
-              "institution",
-              "source_type",
-              "relevant",
-              "access_status",
-              "summary",
-              "claims",
-              "limitations",
-            ],
-          },
-        },
-      },
-      required: ["sources"],
-    },
+    format: zodFormat(z.object({
+      sources: z.array(z.object({
+        id: z.string(),
+        url: z.string(),
+        title: z.string(),
+        authors: z.array(z.string()),
+        year: z.string(),
+        institution: z.string(),
+        source_type: z.string(),
+        relevant: z.boolean(),
+        access_status: z.string(),
+        summary: z.string(),
+        claims: z.array(z.object({
+          text: z.string(),
+          evidence: z.string(),
+          direct_quote: z.string(),
+          confidence: z.enum(["verified", "inferred", "uncertain"]),
+        })),
+        limitations: z.array(z.string()),
+      })),
+    })),
     maxIterations: 16,
     onThinking: gray,
+    onContent: (chunk) => writeChunk(chunk),
     onToolCall,
     onToolResult,
     think: true,
@@ -605,6 +536,9 @@ Uma conclusão aceitável pode ser: 'as evidências disponíveis situam X em det
 
 Mantenha os IDs originais das fontes (S1, S2…). Eles serão convertidos em footnotes na redação.
 
+MAPEAMENTO DE URLs
+Além dos findings, inclua obrigatoriamente o campo "source_urls" mapeando cada ID de fonte para sua URL real. Extraia essas URLs do inventário de entrada. Este campo será usado pelo estágio de redação para gerar as footnotes.
+
 SAÍDA EXCLUSIVA
 {
   "research_question": "...",
@@ -617,74 +551,42 @@ SAÍDA EXCLUSIVA
       "basis": "..."
     }
   ],
+  "source_urls": {
+    "S1": "https://...",
+    "S2": "https://..."
+  },
   "consensus": ["..."],
   "controversies": ["..."],
   "uncertainties": ["..."],
   "gaps": ["..."]
 }`,
     transform: (previous) =>
-      `INVENTÁRIO CONSOLIDADO:\n${previous.content}\n\nProduza agora a síntese crítica.`,
+      `INVENTÁRIO CONSOLIDADO:\n${previous.content}\n\nProduza agora a síntese crítica. Lembre-se de incluir source_urls mapeando IDs para URLs.`,
     tools: [],
     toolHandlers: ALL_HANDLERS,
-    format: {
-      type: "object",
-      properties: {
-        research_question: { type: "string" },
-        overall_assessment: { type: "string" },
-        findings: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              claim: {
-                type: "string",
-                description:
-                  "afirmação específica, preferencialmente com data, número ou nome próprio",
-              },
-              sources: { type: "array", items: { type: "string" } },
-              support: { type: "string" },
-              basis: { type: "string" },
-              evidence_type: {
-                type: "string",
-                enum: ["primary", "secondary", "tertiary"],
-              },
-              nature: {
-                type: "string",
-                enum: ["quantitative", "qualitative", "mixed"],
-              },
-              independence: {
-                type: "string",
-                enum: ["independent", "likely_derivative", "unknown"],
-              },
-            },
-            required: [
-              "claim",
-              "sources",
-              "support",
-              "basis",
-              "evidence_type",
-              "nature",
-              "independence",
-            ],
-          },
-        },
-        consensus: { type: "array", items: { type: "string" } },
-        controversies: { type: "array", items: { type: "string" } },
-        uncertainties: { type: "array", items: { type: "string" } },
-        gaps: { type: "array", items: { type: "string" } },
-      },
-      required: [
-        "research_question",
-        "overall_assessment",
-        "findings",
-        "consensus",
-        "controversies",
-        "uncertainties",
-        "gaps",
-      ],
-    },
+    format: zodFormat(z.object({
+      research_question: z.string(),
+      overall_assessment: z.string(),
+      findings: z.array(z.object({
+        claim: z.string().describe(
+          "afirmação específica, preferencialmente com data, número ou nome próprio",
+        ),
+        sources: z.array(z.string()),
+        support: z.string(),
+        basis: z.string(),
+        evidence_type: z.enum(["primary", "secondary", "tertiary"]),
+        nature: z.enum(["quantitative", "qualitative", "mixed"]),
+        independence: z.enum(["independent", "likely_derivative", "unknown"]),
+      })),
+      source_urls: z.record(z.string(), z.string()),
+      consensus: z.array(z.string()),
+      controversies: z.array(z.string()),
+      uncertainties: z.array(z.string()),
+      gaps: z.array(z.string()),
+    })),
     maxIterations: 4,
     onThinking: gray,
+    onContent: (chunk) => writeChunk(chunk),
     onToolCall,
     onToolResult,
     think: true,
@@ -887,40 +789,40 @@ SAÍDA EXCLUSIVA
     "factual_density_score": 0
   }
 }`,
-    transform: (_previous) =>
-      `ARTIGO GERADO EM:\n${OUTPUT_FILE}\n\nLEIA O ARQUIVO, REVISE E SOBRESCREVA COM A VERSÃO FINAL.`,
+    transform: (previous) => {
+      let sourceUrlsBlock = "";
+      try {
+        const synthesis = JSON.parse(previous.content);
+        if (synthesis.source_urls) {
+          sourceUrlsBlock =
+            "\n\nURLS DAS FONTES (use para montar as footnotes):\n" +
+            Object.entries(synthesis.source_urls)
+              .map(([id, url]) => `${id}: ${url}`)
+              .join("\n");
+        }
+      } catch {
+        // ignore parse errors
+      }
+      return `SÍNTESE DE EVIDÊNCIAS:\n${previous.content}${sourceUrlsBlock}\n\nRedija o artigo acadêmico completo. Preserve os findings e seus IDs de fonte. Use as URLs acima para montar as footnotes.`;
+    },
     tools: pick("file_read", "file_write"),
     toolHandlers: ALL_HANDLERS,
-    format: {
-      type: "object",
-      properties: {
-        revised: { type: "boolean" },
-        path: { type: "string" },
-        quality_report: {
-          type: "object",
-          properties: {
-            sources_found: { type: "integer" },
-            sources_used: { type: "integer" },
-            claims_extracted: { type: "integer" },
-            claims_in_article: { type: "integer" },
-            footnotes: { type: "integer" },
-            factual_density_score: { type: "integer" },
-          },
-          required: [
-            "sources_found",
-            "sources_used",
-            "claims_extracted",
-            "claims_in_article",
-            "footnotes",
-            "factual_density_score",
-          ],
-        },
-      },
-      required: ["revised", "path", "quality_report"],
-    },
+    format: zodFormat(z.object({
+      revised: z.boolean(),
+      path: z.string(),
+      quality_report: z.object({
+        sources_found: z.number(),
+        sources_used: z.number(),
+        claims_extracted: z.number(),
+        claims_in_article: z.number(),
+        footnotes: z.number(),
+        factual_density_score: z.number(),
+      }),
+    })),
     maxIterations: 7,
     think: "high",
     onThinking: gray,
+    onContent: (chunk) => writeChunk(chunk),
     onToolCall,
     onToolResult,
   })
