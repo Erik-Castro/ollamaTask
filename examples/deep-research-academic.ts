@@ -306,6 +306,16 @@ PARA CADA URL
 6. Para cada claim, registre evidência ou contexto textual da própria página.
 7. Registre limitações ou ressalvas explícitas.
 
+METADADOS OBRIGATÓRIOS PARA CITAÇÃO
+Para cada fonte, capture o máximo possível de:
+- title (título completo da página ou do trabalho)
+- authors (lista de autores; se não houver, use a instituição)
+- year (ano de publicação ou de atualização; se não houver, "s.d.")
+- institution (instituição, revista, museu, universidade etc.)
+- url (obrigatório)
+
+Esses campos serão usados depois para montar footnotes. Nunca deixe title ou url vazios se a página os contiver.
+
 REGRAS CRÍTICAS
 - 'Sem informação suficiente no conteúdo recuperado' NÃO significa 'não existe evidência sobre o assunto'.
 - Uma página indisponível significa apenas que aquela URL não pôde ser analisada.
@@ -552,6 +562,8 @@ REGRA FUNDAMENTAL
 Se existirem fontes relevantes e claims sustentados, a saída NÃO PODE declarar que 'não existem evidências' apenas porque não existe uma resposta definitiva.
 Uma conclusão aceitável pode ser: 'as evidências disponíveis situam X em determinado período, mas não permitem estabelecer um ponto único de origem'.
 
+Mantenha os IDs originais das fontes (S1, S2…). Eles serão convertidos em footnotes na redação.
+
 SAÍDA EXCLUSIVA
 {
   "research_question": "...",
@@ -663,11 +675,25 @@ Compare os achados, trate convergências, divergências, limitações e grau de 
 ## 5. Conclusão
 Responda diretamente à pergunta. Uma conclusão pode ser parcial ou condicional; não transforme uma limitação em desconhecimento absoluto.
 
-## Referências
-Inclua TODAS as fontes efetivamente utilizadas. Para evitar referências inventadas, use identificadores [S1], [S2] etc. no texto e na lista final. Inclua título, autores/instituição quando disponíveis, ano quando disponível e URL.
+CITAÇÕES NO TEXTO (FORMATO OBRIGATÓRIO)
+Use exclusivamente o formato de footnote Markdown:
+- No corpo do texto: ... afirmação[^S1]. ou ... afirmação[^S1][^S3].
+- Nunca use [S1] entre colchetes simples.
+- Nunca invente números de footnote. Use exatamente os IDs das fontes (S1, S2, S3…).
 
-CITAÇÕES NO TEXTO
-Use [S1], [S2] etc. de acordo com os IDs fornecidos pela síntese. Não invente autor ou ano.
+REFERÊNCIAS / FOOTNOTES
+No final do artigo, após a Conclusão, coloque a seção de footnotes no formato Markdown puro, uma linha por fonte, assim:
+
+[^S1]: Autor(es) ou Instituição. Título completo. Ano. URL
+[^S2]: Autor(es) ou Instituição. Título completo. Ano. URL
+
+Regras para o conteúdo de cada footnote:
+1. Use os metadados reais extraídos (title, authors, year, institution, url).
+2. Se faltar autor, comece pela institution.
+3. Se faltar ano, use "s.d.".
+4. Sempre termine com a URL completa.
+5. Nunca escreva "Título/Instituição não disponível". Se o dado realmente não existir, omita apenas aquele campo e mantenha os demais.
+6. Não crie uma seção "## Referências" separada. As footnotes já são as referências.
 
 REGRAS DE CONTEÚDO
 1. A seção Resultados não pode ficar vazia se a síntese contiver findings.
@@ -687,6 +713,8 @@ REGRAS DE CONTEÚDO
     - citações curtas entre aspas quando suportadas pelas fontes.
 12. Evite frases abstratas ou retóricas do tipo "ascensão meteórica", "estratégia comercial agressiva", "marco da música nordestina" sem que imediatamente em seguida apareça o dado ou a fonte que as sustenta.
 13. Se um finding da síntese for genérico, reformule-o na redação de forma mais precisa ou rebaixe seu peso, em vez de amplificá-lo com linguagem enfeitada.
+14. Todas as citações no texto devem estar no formato [^S1], [^S2] etc.
+15. Todas as fontes utilizadas devem aparecer como footnotes no final do documento, no formato Markdown padrão de footnotes.
 
 CRITÉRIO DE QUALIDADE
 Priorize substância factual sobre fluência retórica. Um parágrafo com três dados concretos é preferível a um parágrafo eloquente sem números, datas ou nomes próprios. O artigo deve responder à pergunta usando a maior quantidade possível de conteúdo factual sustentado pelo inventário e pela síntese, mantendo linguagem acadêmica.
@@ -740,7 +768,11 @@ VERIFIQUE
 - consistência dos IDs [S1], [S2] etc.;
 - correspondência entre citações e referências;
 - ausência de afirmações mais fortes que as evidências;
-- ausência de metodologia inventada.
+- ausência de metodologia inventada;
+- se todas as citações estão no formato de footnote Markdown ([^S1], [^S2]…);
+- se existe a definição correspondente no final do arquivo para cada footnote usada;
+- se nenhuma referência aparece como "Título/Instituição não disponível";
+- se as footnotes contêm pelo menos título + URL (e autor/ano quando disponíveis).
 
 REGRAS
 1. Não faça novas pesquisas.
@@ -750,6 +782,8 @@ REGRAS
 5. Se o artigo afirmar que não há evidência, verifique se isso é realmente compatível com as fontes apresentadas no próprio texto. Se houver fontes e claims, prefira uma formulação proporcional como 'as fontes recuperadas indicam...' ou 'as evidências não permitem estabelecer...'.
 6. Preserve todas as referências válidas.
 7. Corrija apenas problemas de conteúdo que possam ser resolvidos usando o próprio artigo; caso contrário, mantenha a formulação cautelosa.
+8. Se encontrar citações no formato antigo [S1], converta-as para [^S1] e garanta que a footnote correspondente exista no final.
+9. Se alguma footnote estiver com texto genérico ("não disponível"), reescreva-a com os melhores metadados possíveis presentes no próprio artigo ou deixe apenas os campos existentes + URL.
 
 SALVE SOBRE O MESMO ARQUIVO
 "${OUTPUT_FILE}"
