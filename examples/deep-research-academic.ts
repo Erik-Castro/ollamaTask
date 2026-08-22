@@ -128,6 +128,8 @@ const pick = (...names: string[]) =>
 const pickAll = () => ALL_DEFINITIONS;
 
 const query = Deno.args[0]?.trim();
+/*console.log("[DEBUG]",query);
+Deno.exit(0);*/
 if (!query) {
   console.error('Uso: deep-research-academic <"consulta">');
   Deno.exit(1);
@@ -306,15 +308,20 @@ PARA CADA URL
 6. Para cada claim, registre evidência ou contexto textual da própria página.
 7. Registre limitações ou ressalvas explícitas.
 
-METADADOS OBRIGATÓRIOS PARA CITAÇÃO
-Para cada fonte, capture o máximo possível de:
-- title (título completo da página ou do trabalho)
-- authors (lista de autores; se não houver, use a instituição)
-- year (ano de publicação ou de atualização; se não houver, "s.d.")
-- institution (instituição, revista, museu, universidade etc.)
-- url (obrigatório)
+METADADOS OBRIGATÓRIOS (NÃO INVENTAR)
+Para cada fonte registre exatamente o que estiver presente na página:
+- title: título real da página ou do artigo
+- authors: autores reais; se não houver, use a instituição ou o site
+- year: ano real de publicação ou da última atualização; se não houver, use "s.d."
+- institution: nome real da instituição, revista ou site
+- url: a URL exata que foi acessada (nunca invente DOI ou URL)
 
-Esses campos serão usados depois para montar footnotes. Nunca deixe title ou url vazios se a página os contiver.
+PROIBIDO
+- Inventar DOI, autor, título ou ano.
+- Usar placeholders como "Fonte Acadêmica", "Science / Nature (via Síntese)", "Estudo específico de 20XX".
+- Criar links que não foram retornados pelo web_fetch.
+
+Se um campo não existir na página, deixe-o como string vazia ou "s.d." e registre a limitação.
 
 REGRAS CRÍTICAS
 - 'Sem informação suficiente no conteúdo recuperado' NÃO significa 'não existe evidência sobre o assunto'.
@@ -681,19 +688,26 @@ Use exclusivamente o formato de footnote Markdown:
 - Nunca use [S1] entre colchetes simples.
 - Nunca invente números de footnote. Use exatamente os IDs das fontes (S1, S2, S3…).
 
-REFERÊNCIAS / FOOTNOTES
-No final do artigo, após a Conclusão, coloque a seção de footnotes no formato Markdown puro, uma linha por fonte, assim:
+REFERÊNCIAS / FOOTNOTES (FORMATO E CONTEÚDO OBRIGATÓRIOS)
 
-[^S1]: Autor(es) ou Instituição. Título completo. Ano. URL
-[^S2]: Autor(es) ou Instituição. Título completo. Ano. URL
+No final do artigo use exclusivamente este formato:
 
-Regras para o conteúdo de cada footnote:
-1. Use os metadados reais extraídos (title, authors, year, institution, url).
-2. Se faltar autor, comece pela institution.
-3. Se faltar ano, use "s.d.".
-4. Sempre termine com a URL completa.
-5. Nunca escreva "Título/Instituição não disponível". Se o dado realmente não existir, omita apenas aquele campo e mantenha os demais.
-6. Não crie uma seção "## Referências" separada. As footnotes já são as referências.
+[^S1]: Título real. Autor ou Instituição. Ano. URL_real
+[^S2]: Título real. Autor ou Instituição. Ano. URL_real
+
+REGRAS ABSOLUTAS
+1. Use SOMENTE os metadados que foram efetivamente extraídos no estágio de análise das fontes.
+2. A URL deve ser exatamente a que foi acessada (a mesma retornada pelo web_fetch). Nunca invente DOI nem URL.
+3. Se faltar autor, comece pelo título ou pela instituição.
+4. Se faltar ano, escreva "s.d.".
+5. Nunca escreva:
+   - "Fonte Acadêmica"
+   - "Science / Nature (via Síntese)"
+   - "Estudo específico de 20XX"
+   - "Título/Instituição não disponível"
+   - qualquer DOI ou link inventado
+6. Se a única informação confiável for o título da página + a URL real, use apenas isso.
+7. É preferível uma footnote incompleta porém verdadeira a uma footnote completa inventada.
 
 REGRAS DE CONTEÚDO
 1. A seção Resultados não pode ficar vazia se a síntese contiver findings.
@@ -772,7 +786,11 @@ VERIFIQUE
 - se todas as citações estão no formato de footnote Markdown ([^S1], [^S2]…);
 - se existe a definição correspondente no final do arquivo para cada footnote usada;
 - se nenhuma referência aparece como "Título/Instituição não disponível";
-- se as footnotes contêm pelo menos título + URL (e autor/ano quando disponíveis).
+- se as footnotes contêm pelo menos título + URL (e autor/ano quando disponíveis);
+- Verifique se alguma footnote contém DOI ou URL claramente inventados (ex.: terminados em .00000, ni8005, etc.);
+- Verifique se existem expressões proibidas: "Fonte Acadêmica", "via Síntese", "Estudo específico de", "Science / Nature (via…)";
+- Se encontrar qualquer footnote inventada, reescreva-a usando apenas título + URL real disponíveis no próprio texto ou remova a citação correspondente se não houver dado confiável;
+- Prefira footnote verdadeira e enxuta a footnote falsa e completa.
 
 REGRAS
 1. Não faça novas pesquisas.
