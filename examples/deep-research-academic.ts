@@ -167,6 +167,7 @@ if (!query) {
 const OUT_DIR = "data/research";
 await Deno.mkdir(OUT_DIR, { recursive: true });
 const OUTPUT_FILE = `${OUT_DIR}/article-${Date.now()}.md`;
+const SYNTHESIS_FILE = `${OUT_DIR}/synthesis-${Date.now()}.json`;
 
 let totalToolCalls = 0;
 const encoder = new TextEncoder();
@@ -408,7 +409,7 @@ Valores permitidos para confidence: verified (dados diretos da fonte), inferred 
         claims: z.array(z.object({
           text: z.string(),
           evidence: z.string(),
-          direct_quote: z.string(),
+          direct_quote: z.union([z.string(), z.null()]).default(""),
           confidence: z.enum(["verified", "inferred", "uncertain"]),
         })),
         limitations: z.array(z.string()),
@@ -482,7 +483,7 @@ Retorne o inventário consolidado, incluindo fontes antigas e novas, no mesmo fo
         claims: z.array(z.object({
           text: z.string(),
           evidence: z.string(),
-          direct_quote: z.string(),
+          direct_quote: z.union([z.string(), z.null()]).default(""),
           confidence: z.enum(["verified", "inferred", "uncertain"]),
         })),
         limitations: z.array(z.string()),
@@ -698,18 +699,36 @@ RETORNE EXCLUSIVAMENTE:
   "path": "${OUTPUT_FILE}",
   "ok": true
 }`,
-    transform: (previous) =>
-      `SÍNTESE DE EVIDÊNCIAS:\n${previous.content}\n\nRedija o artigo acadêmico completo. Preserve os findings e seus IDs de fonte.`,
+    transform: async (previous) => {
+      await Deno.writeTextFile(SYNTHESIS_FILE, previous.content);
+
+      let urlsBlock = "";
+      try {
+        const synthesis = JSON.parse(previous.content);
+        if (
+          synthesis.source_urls && typeof synthesis.source_urls === "object"
+        ) {
+          urlsBlock =
+            "\n\nURLS DAS FONTES (use EXATAMENTE estas nas footnotes):\n" +
+            Object.entries(synthesis.source_urls as Record<string, string>)
+              .map(([id, url]) => `${id}: ${url}`)
+              .join("\n");
+        }
+      } catch {
+        // síntese malformada — redação ainda recebe o JSON bruto
+      }
+
+      return (
+        `SÍNTESE DE EVIDÊNCIAS:\n${previous.content}` +
+        urlsBlock +
+        `\n\nRedija o artigo acadêmico completo em Markdown.` +
+        `\nGrave com file_write em: ${OUTPUT_FILE}` +
+        `\nPreserve os findings e IDs de fonte. Use as URLs acima nas footnotes.`
+      );
+    },
     tools: pick("file_write"),
     toolHandlers: ALL_HANDLERS,
-    format: {
-      type: "object",
-      properties: {
-        path: { type: "string" },
-        ok: { type: "boolean" },
-      },
-      required: ["path", "ok"],
-    },
+    // format removido para não competir entre artigo longo e JSON {path, ok}
     maxIterations: 6,
     onThinking: gray,
     onToolCall,
@@ -789,21 +808,34 @@ SAÍDA EXCLUSIVA
     "factual_density_score": 0
   }
 }`,
-    transform: (previous) => {
-      let sourceUrlsBlock = "";
+    transform: async (previous) => {
+      let synthesisRaw = "";
+      let urlsBlock = "";
       try {
-        const synthesis = JSON.parse(previous.content);
-        if (synthesis.source_urls) {
-          sourceUrlsBlock =
-            "\n\nURLS DAS FONTES (use para montar as footnotes):\n" +
-            Object.entries(synthesis.source_urls)
+        synthesisRaw = await Deno.readTextFile(SYNTHESIS_FILE);
+        const synthesis = JSON.parse(synthesisRaw);
+        if (
+          synthesis.source_urls && typeof synthesis.source_urls === "object"
+        ) {
+          urlsBlock =
+            "\n\nURLS DAS FONTES (footnotes devem usar só estas URLs):\n" +
+            Object.entries(synthesis.source_urls as Record<string, string>)
               .map(([id, url]) => `${id}: ${url}`)
               .join("\n");
         }
       } catch {
-        // ignore parse errors
+        synthesisRaw =
+          "(síntese indisponível — revise só com base no arquivo do artigo)";
       }
-      return `SÍNTESE DE EVIDÊNCIAS:\n${previous.content}${sourceUrlsBlock}\n\nRedija o artigo acadêmico completo. Preserve os findings e seus IDs de fonte. Use as URLs acima para montar as footnotes.`;
+
+      return (
+        `ARTIGO A REVISAR: ${OUTPUT_FILE}\n` +
+        `(stage anterior: ${previous.content})\n\n` +
+        `SÍNTESE ORIGINAL (referência, não reescreva fatos novos):\n${synthesisRaw}` +
+        urlsBlock +
+        `\n\nLeia o arquivo com file_read, revise conforme as regras, ` +
+        `salve com file_write no mesmo path e responda o JSON do quality_report.`
+      );
     },
     tools: pick("file_read", "file_write"),
     toolHandlers: ALL_HANDLERS,
@@ -840,6 +872,48 @@ results.forEach((result, index) => {
       `${result.toolCalls.length} chamadas de ferramentas`,
   );
 });
+
+let failed = 0;
+const assert = (name: string, ok: boolean, detail = "") => {
+  if (ok) console.log(`  ✅ ${name}`);
+  else {
+    failed++;
+    console.log(`  ❌ ${name}${detail ? " — " + detail : ""}`);
+  }
+};
+
+console.log("\n=== Asserts ===");
+
+const articleExists = await Deno.stat(OUTPUT_FILE).then(() => true).catch(() =>
+  false
+);
+assert("A1 artigo existe", articleExists, OUTPUT_FILE);
+
+if (articleExists) {
+  const body = await Deno.readTextFile(OUTPUT_FILE);
+  assert("A2 não vazio", body.trim().length > 500);
+  assert(
+    "A3 tem footnote Markdown",
+    /\[\^[Ss]\d+\]/.test(body) || /\[\^S\d+\]/.test(body),
+  );
+  assert("A4 tem definição de footnote", /^\[\^S\d+\]:/m.test(body));
+  assert("A5 tem pelo menos uma URL http", /https?:\/\//.test(body));
+  assert(
+    "A6 sem placeholder proibido",
+    !/Fonte Acadêmica|via Síntese|Estudo específico de/i.test(body),
+  );
+}
+
+const synthesisExists = await Deno.stat(SYNTHESIS_FILE).then(() => true).catch(
+  () => false,
+);
+assert("A7 síntese gravada", synthesisExists, SYNTHESIS_FILE);
+
+if (failed) {
+  console.error(`\nFALHOU: ${failed} assert(s)`);
+  Deno.exit(1);
+}
+console.log("\nOK — asserts passaram.");
 
 if (mcp.bridge) {
   await mcp.bridge.close();
