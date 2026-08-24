@@ -78,6 +78,11 @@ export class ollamaTask {
   ) => void;
   private _numCtx?: number;
   private _temperature?: number;
+  private _keepAlive?: string | number;
+  private _stop?: string[];
+  private _numPredict?: number;
+  private _seed?: number;
+  private _options?: Record<string, unknown>;
 
   constructor(model: string) {
     this._model = model;
@@ -88,8 +93,13 @@ export class ollamaTask {
     return this;
   }
 
-  public user(content: string): this {
-    this._messages.push({ role: "user", content });
+  public user(
+    content: string,
+    options?: { images?: (Uint8Array | string)[] },
+  ): this {
+    const msg: Message = { role: "user", content };
+    if (options?.images) msg.images = options.images;
+    this._messages.push(msg);
     return this;
   }
 
@@ -125,6 +135,31 @@ export class ollamaTask {
 
   public temperature(t: number): this {
     this._temperature = t;
+    return this;
+  }
+
+  public keepAlive(duration: string | number): this {
+    this._keepAlive = duration;
+    return this;
+  }
+
+  public stop(sequences: string[]): this {
+    this._stop = sequences;
+    return this;
+  }
+
+  public numPredict(n: number): this {
+    this._numPredict = n;
+    return this;
+  }
+
+  public seed(n: number): this {
+    this._seed = n;
+    return this;
+  }
+
+  public options(opts: Record<string, unknown>): this {
+    this._options = opts;
     return this;
   }
 
@@ -217,11 +252,18 @@ export class ollamaTask {
         format: this._format,
         think: this._resoaning,
         stream: true,
+        keep_alive: this._keepAlive,
         options: {
+          ...this._options,
           ...(this._numCtx !== undefined && { num_ctx: this._numCtx }),
           ...(this._temperature !== undefined && {
             temperature: this._temperature,
           }),
+          ...(this._stop !== undefined && { stop: this._stop }),
+          ...(this._numPredict !== undefined && {
+            num_predict: this._numPredict,
+          }),
+          ...(this._seed !== undefined && { seed: this._seed }),
         },
       });
 

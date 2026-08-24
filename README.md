@@ -73,13 +73,18 @@ All builder methods return `this` for chaining.
 | Method             | Signature                                    | Description                                     |
 | ------------------ | -------------------------------------------- | ----------------------------------------------- |
 | `.system()`        | `(content: string) => this`                  | Add a system message                            |
-| `.user()`          | `(content: string) => this`                  | Add a user message                              |
+| `.user()`          | `(content: string, opts?) => this`           | Add a user message (optional `images`)          |
 | `.tools()`         | `(defs: ToolDefinition[]) => this`           | Register tool schemas for the model             |
 | `.toolHandlers()`  | `(handlers: ToolHandler[]) => this`          | Register tool executor functions                |
 | `.format()`        | `(schema: string \| object) => this`         | Set response format (`"json"` or JSON schema)   |
 | `.maxIterations()` | `(n: number) => this`                        | Cap tool-calling pipeline loops (default: `10`) |
 | `.numCtx()`        | `(n: number) => this`                        | Set context window size (Ollama `num_ctx`)      |
 | `.temperature()`   | `(t: number) => this`                        | Set sampling temperature (0.0–2.0)              |
+| `.keepAlive()`     | `(duration: string \| number) => this`       | How long to keep model loaded (`"5m"`, `300`)   |
+| `.stop()`          | `(sequences: string[]) => this`              | Stop sequences to halt generation               |
+| `.numPredict()`    | `(n: number) => this`                        | Max tokens to generate                          |
+| `.seed()`          | `(n: number) => this`                        | Random seed for reproducibility                 |
+| `.options()`       | `(opts: Record<string, unknown>) => this`    | Pass any Ollama runtime option                  |
 | `.onThinking()`    | `(cb: (chunk: string) => void) => this`      | Callback for thinking/reasoning tokens          |
 | `.onContent()`     | `(cb: (chunk: string) => void) => this`      | Callback for response content tokens            |
 | `.onToolCall()`    | `(cb: (name, args) => void) => this`         | Callback when model requests a tool             |
@@ -270,6 +275,30 @@ const result = await new ollamaTask("qwen3.5:2b")
   .execute();
 
 const colors: string[] = result.parse<string[]>();
+```
+
+### Vision Models (Multimodal)
+
+Pass images to vision models like LLaVA or Llama 3.2 Vision via the `images`
+option in `.user()`. Images can be file paths, base64 strings, or `Uint8Array`
+buffers.
+
+```ts
+const result = await new ollamaTask("llava")
+  .user("What do you see in this image?", { images: ["photo.jpg"] })
+  .execute();
+
+console.log(result.content);
+```
+
+Multiple images:
+
+```ts
+const result = await new ollamaTask("llava")
+  .user("Compare these two images.", {
+    images: ["before.jpg", "after.jpg"],
+  })
+  .execute();
 ```
 
 ### WebStreams
@@ -487,6 +516,11 @@ const final = await ollamaPipeline
 | `maxIterations` | `number`                       | Cap tool-calling loops (default: `10`)       |
 | `numCtx`        | `number`                       | Context window size (Ollama `num_ctx`)       |
 | `temperature`   | `number`                       | Sampling temperature (0.0–2.0)               |
+| `keepAlive`     | `string \| number`             | How long to keep model loaded                |
+| `stop`          | `string[]`                     | Stop sequences to halt generation            |
+| `numPredict`    | `number`                       | Max tokens to generate                       |
+| `seed`          | `number`                       | Random seed for reproducibility              |
+| `options`       | `Record<string, unknown>`      | Any Ollama runtime option                    |
 | `onThinking`    | `(chunk: string) => void`      | Thinking token callback                      |
 | `onContent`     | `(chunk: string) => void`      | Content token callback                       |
 | `onToolCall`    | `(name, args) => void`         | Tool call callback                           |

@@ -25,6 +25,11 @@ export interface StageConfig {
   maxIterations?: number;
   numCtx?: number;
   temperature?: number;
+  keepAlive?: string | number;
+  stop?: string[];
+  numPredict?: number;
+  seed?: number;
+  options?: Record<string, unknown>;
   onThinking?: (chunk: string) => void;
   onContent?: (chunk: string) => void;
   onToolCall?: (name: string, args: ToolArgs) => void;
@@ -46,6 +51,11 @@ export interface RAGStageConfig {
   maxIterations?: number;
   numCtx?: number;
   temperature?: number;
+  keepAlive?: string | number;
+  stop?: string[];
+  numPredict?: number;
+  seed?: number;
+  options?: Record<string, unknown>;
   onThinking?: (chunk: string) => void;
   onContent?: (chunk: string) => void;
   onToolCall?: (name: string, args: ToolArgs) => void;
@@ -112,6 +122,11 @@ export class ollamaPipeline {
     if (config.maxIterations) task.maxIterations(config.maxIterations);
     if (config.numCtx !== undefined) task.numCtx(config.numCtx);
     if (config.temperature !== undefined) task.temperature(config.temperature);
+    if (config.keepAlive !== undefined) task.keepAlive(config.keepAlive);
+    if (config.stop !== undefined) task.stop(config.stop);
+    if (config.numPredict !== undefined) task.numPredict(config.numPredict);
+    if (config.seed !== undefined) task.seed(config.seed);
+    if (config.options) task.options(config.options);
     if (config.onThinking) task.onThinking(config.onThinking);
     if (config.onContent) task.onContent(config.onContent);
     if (config.onToolCall) task.onToolCall(config.onToolCall);
