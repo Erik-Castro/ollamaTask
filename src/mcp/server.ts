@@ -53,8 +53,8 @@ class DenoStdioServerTransport implements DenoTransport {
   onclose?: () => void;
   onerror?: (error: Error) => void;
 
-  async start(): Promise<void> {
-    if (this._started) return;
+  start(): Promise<void> {
+    if (this._started) return Promise.resolve();
     this._started = true;
 
     const reader = Deno.stdin.readable.getReader();
@@ -103,8 +103,12 @@ class DenoStdioServerTransport implements DenoTransport {
     await Deno.stdout.write(encoded);
   }
 
-  async close(): Promise<void> {
+  close(): void {
     this.onclose?.();
+  }
+
+  [Symbol.dispose](): void {
+    this.close();
   }
 }
 
