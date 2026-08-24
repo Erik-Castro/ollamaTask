@@ -76,6 +76,8 @@ export class ollamaTask {
     args: ToolArgs,
     result: unknown,
   ) => void;
+  private _numCtx?: number;
+  private _temperature?: number;
 
   constructor(model: string) {
     this._model = model;
@@ -113,6 +115,16 @@ export class ollamaTask {
 
   public reasoning(reasonig: Thinking) {
     this._resoaning = reasonig;
+    return this;
+  }
+
+  public numCtx(n: number): this {
+    this._numCtx = n;
+    return this;
+  }
+
+  public temperature(t: number): this {
+    this._temperature = t;
     return this;
   }
 
@@ -205,6 +217,12 @@ export class ollamaTask {
         format: this._format,
         think: this._resoaning,
         stream: true,
+        options: {
+          ...(this._numCtx !== undefined && { num_ctx: this._numCtx }),
+          ...(this._temperature !== undefined && {
+            temperature: this._temperature,
+          }),
+        },
       });
 
       let iterationContent = "";

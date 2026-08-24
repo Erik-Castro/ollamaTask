@@ -23,6 +23,8 @@ export interface StageConfig {
   mcpServers?: MCPServerConfig[];
   format?: string | object;
   maxIterations?: number;
+  numCtx?: number;
+  temperature?: number;
   onThinking?: (chunk: string) => void;
   onContent?: (chunk: string) => void;
   onToolCall?: (name: string, args: ToolArgs) => void;
@@ -42,6 +44,8 @@ export interface RAGStageConfig {
   mcpServers?: MCPServerConfig[];
   format?: string | object;
   maxIterations?: number;
+  numCtx?: number;
+  temperature?: number;
   onThinking?: (chunk: string) => void;
   onContent?: (chunk: string) => void;
   onToolCall?: (name: string, args: ToolArgs) => void;
@@ -106,6 +110,8 @@ export class ollamaPipeline {
 
     if (config.format) task.format(config.format);
     if (config.maxIterations) task.maxIterations(config.maxIterations);
+    if (config.numCtx !== undefined) task.numCtx(config.numCtx);
+    if (config.temperature !== undefined) task.temperature(config.temperature);
     if (config.onThinking) task.onThinking(config.onThinking);
     if (config.onContent) task.onContent(config.onContent);
     if (config.onToolCall) task.onToolCall(config.onToolCall);

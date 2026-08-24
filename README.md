@@ -78,6 +78,8 @@ All builder methods return `this` for chaining.
 | `.toolHandlers()`  | `(handlers: ToolHandler[]) => this`          | Register tool executor functions                |
 | `.format()`        | `(schema: string \| object) => this`         | Set response format (`"json"` or JSON schema)   |
 | `.maxIterations()` | `(n: number) => this`                        | Cap tool-calling pipeline loops (default: `10`) |
+| `.numCtx()`        | `(n: number) => this`                        | Set context window size (Ollama `num_ctx`)      |
+| `.temperature()`   | `(t: number) => this`                        | Set sampling temperature (0.0–2.0)              |
 | `.onThinking()`    | `(cb: (chunk: string) => void) => this`      | Callback for thinking/reasoning tokens          |
 | `.onContent()`     | `(cb: (chunk: string) => void) => this`      | Callback for response content tokens            |
 | `.onToolCall()`    | `(cb: (name, args) => void) => this`         | Callback when model requests a tool             |
@@ -483,6 +485,8 @@ const final = await ollamaPipeline
 | `toolHandlers`  | `ToolHandler[]`                | Tool executor functions                      |
 | `format`        | `string \| object`             | Response format (`"json"` or JSON schema)    |
 | `maxIterations` | `number`                       | Cap tool-calling loops (default: `10`)       |
+| `numCtx`        | `number`                       | Context window size (Ollama `num_ctx`)       |
+| `temperature`   | `number`                       | Sampling temperature (0.0–2.0)               |
 | `onThinking`    | `(chunk: string) => void`      | Thinking token callback                      |
 | `onContent`     | `(chunk: string) => void`      | Content token callback                       |
 | `onToolCall`    | `(name, args) => void`         | Tool call callback                           |
