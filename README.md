@@ -509,6 +509,7 @@ const final = await ollamaPipeline
 | `model`         | `string`                       | Ollama model name (required)                 |
 | `system`        | `string`                       | System prompt for this stage                 |
 | `user`          | `string`                       | Override user message (default: prev result) |
+| `images`        | `(Uint8Array \| string)[]`     | Images for vision models                     |
 | `transform`     | `(prev, original) => string`   | Transform previous result into next prompt   |
 | `tools`         | `ToolDefinition[]`             | Tool schemas for this stage                  |
 | `toolHandlers`  | `ToolHandler[]`                | Tool executor functions                      |

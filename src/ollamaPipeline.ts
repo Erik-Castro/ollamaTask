@@ -14,6 +14,7 @@ export interface StageConfig {
   model: string;
   system?: string;
   user?: string;
+  images?: (Uint8Array | string)[];
   transform?: (
     prev: ExecutionResult,
     original: string,
@@ -43,6 +44,7 @@ export interface RAGStageConfig {
   k?: number;
   system?: string;
   user?: string;
+  images?: (Uint8Array | string)[];
   autoIndex?: boolean;
   tools?: ToolDefinition[];
   toolHandlers?: ToolHandler[];
@@ -104,7 +106,7 @@ export class ollamaPipeline {
       userMessage = this._prompt;
     }
 
-    task.user(userMessage);
+    task.user(userMessage, { images: config.images });
 
     if (config.tools) task.tools(config.tools);
     if (config.toolHandlers) task.toolHandlers(config.toolHandlers);
