@@ -16,9 +16,13 @@
  *   6. Checklist final (file_read para verificar)
  *
  * Uso:
- *   ./news-digest.ts
- *   ./news-digest.ts "tecnologia"
+ *   ./news-digest.ts                (notas gerais)
+ *   ./news-digest.ts "tecnologia"   (tema específico)
+ *   deno task news "economia"       (via task do deno.json — cron-friendly)
  *   glow $(ls -t data/news/*.md | head -1)
+ *
+ * Agendamento (cron):
+ *   0 7 * * *  cd <repo> && deno task news >/dev/null 2>&1
  */
 
 import { ollamaPipeline } from "../src/ollamaPipeline.ts";
@@ -178,6 +182,37 @@ const parseStories = (
   const fromJson = asStories(safeParseJSON(content), ...variants);
   if (fromJson.length > 0) return fromJson;
   return parseMarkdownTable(content);
+};
+
+const TRACKING_PARAMS =
+  /^(utm_|fbclid|gclid|mc_cid|mc_eid|ref|ref_src|source|via)/i;
+
+const normalizeUrl = (url: string): string => {
+  const trimmed = url.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return trimmed.toLowerCase();
+  try {
+    const u = new URL(trimmed);
+    u.hash = "";
+    for (const key of [...u.searchParams.keys()]) {
+      if (TRACKING_PARAMS.test(key)) u.searchParams.delete(key);
+    }
+    u.pathname = u.pathname.replace(/\/+$/, "") || "/";
+    return u.host.toLowerCase() + u.pathname + u.search;
+  } catch {
+    return trimmed.toLowerCase();
+  }
+};
+
+const dedupeStories = <T extends Record<string, unknown>>(items: T[]): T[] => {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    const key = normalizeUrl(String(item.url ?? ""));
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
 };
 
 const assertStories = (
@@ -486,7 +521,9 @@ SAÍDA EXCLUSIVA
   ]
 }`,
     transform: (prev) => {
-      const headlines = parseStories(prev.content, "headlines");
+      const headlines = dedupeStories(
+        parseStories(prev.content, "headlines"),
+      );
       assertStories("Estágio 2 (manchetes recuperadas)", headlines);
       return (
         `MANCHETES RECUPERADAS (JSON limpo):\n` +
@@ -544,7 +581,9 @@ SAÍDA EXCLUSIVA — RETORNE APENAS JSON VÁLIDO, NÃO TABELA MARKDOWN:
   ]
 }`,
     transform: (prev) => {
-      const selected = parseStories(prev.content, "selected");
+      const selected = dedupeStories(
+        parseStories(prev.content, "selected"),
+      );
       assertStories("Estágio 3 (histórias selecionadas)", selected);
       return (
         `HISTÓRIAS SELECIONADAS (JSON limpo):\n` +
@@ -646,7 +685,9 @@ RETORNE:
   "stories": número_de_historias
 }`,
     transform: (prev) => {
-      const stories = parseStories(prev.content, "enriched");
+      const stories = dedupeStories(
+        parseStories(prev.content, "enriched"),
+      );
       assertStories("Estágio 4 (histórias enriquecidas)", stories);
       return (
         `HISTÓRIAS ENRIQUECIDAS (JSON limpo):\n${
@@ -714,20 +755,68 @@ if (mcp.bridge) {
 const stageData = results.map((r) => r.content);
 const queries = asStories(safeParseJSON(stageData[0] ?? ""), "queries");
 await saveArtifact("queries.json", queries);
-const headlines = parseStories(stageData[1] ?? "", "headlines");
+const headlines = dedupeStories(parseStories(stageData[1] ?? "", "headlines"));
 await saveArtifact("headlines.json", headlines);
-const selected = parseStories(stageData[2] ?? "", "selected");
+const selected = dedupeStories(parseStories(stageData[2] ?? "", "selected"));
 await saveArtifact("selected.json", selected);
-const enriched = parseStories(stageData[3] ?? "", "enriched");
+const enriched = dedupeStories(parseStories(stageData[3] ?? "", "enriched"));
 await saveArtifact("enriched.json", enriched);
 
 // ── Relatório final ──────────────────────────────────────────────────────────
 
+const digestBody = await Deno.readTextFile(OUTPUT_FILE).catch(() => "");
+const wordCount = digestBody.trim().split(/\s+/).filter(Boolean).length;
+const readMinutes = Math.max(1, Math.round(wordCount / 200));
+const totalTokens = results.reduce(
+  (acc, r) => acc + r.inputTokens + r.outputTokens,
+  0,
+);
+const perCategory = enriched.reduce<Record<string, number>>((acc, e) => {
+  const category = String(e.category ?? "geral").trim() || "geral";
+  acc[category] = (acc[category] ?? 0) + 1;
+  return acc;
+}, {});
+
+const manifest = {
+  generated_at: now.toISOString(),
+  topic,
+  output_file: OUTPUT_FILE,
+  artifact_dir: OUT_DIR,
+  counts: {
+    queries: queries.length,
+    headlines: headlines.length,
+    selected: selected.length,
+    enriched: enriched.length,
+  },
+  per_category: perCategory,
+  tokens: {
+    total: totalTokens,
+    per_stage: results.map((r) => ({
+      input: r.inputTokens,
+      output: r.outputTokens,
+      tool_calls: r.toolCalls.length,
+    })),
+  },
+  tool_calls_total: totalToolCalls,
+  read_time_minutes: readMinutes,
+  word_count: wordCount,
+};
+const manifestPath = await saveArtifact("manifest.json", manifest);
+
 console.log(`\n✅ Digest concluído.`);
 console.log(`📄 Arquivo: ${OUTPUT_FILE}`);
-console.log(`🔧 Chamadas de ferramentas: ${totalToolCalls}`);
+console.log(`📦 Manifest: ${manifestPath}`);
+console.log(`📖 ${wordCount} palavras · ~${readMinutes} min de leitura`);
 console.log(
-  `ℹ️ manchetes=${headlines.length} selecionadas=${selected.length} enriquecidas=${enriched.length}`,
+  `🔧 Chamadas de ferramentas: ${totalToolCalls} · ${totalTokens} tokens`,
+);
+console.log(
+  `ℹ️ queries=${queries.length} manchetes=${headlines.length} selecionadas=${selected.length} enriquecidas=${enriched.length}`,
+);
+console.log(
+  `🗂️ Por categoria: ${
+    Object.entries(perCategory).map(([c, n]) => `${c}=${n}`).join(" ") || "—"
+  }`,
 );
 console.log(`📊 Estágios:`);
 
@@ -755,6 +844,11 @@ const enrichedExists = await Deno.stat(`${OUT_DIR}/artifact-enriched.json`)
   .then(() => true)
   .catch(() => false);
 assert("Artefato enriched.json gravado", enrichedExists);
+
+const manifestExists = await Deno.stat(`${OUT_DIR}/artifact-manifest.json`)
+  .then(() => true)
+  .catch(() => false);
+assert("Artefato manifest.json gravado", manifestExists);
 
 const exists = await Deno.stat(OUTPUT_FILE).then(() => true).catch(() => false);
 assert("Arquivo existe", exists, OUTPUT_FILE);
