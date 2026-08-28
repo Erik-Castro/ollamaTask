@@ -214,19 +214,17 @@ const results = await ollamaPipeline
     numCtx: 16384,
     system: `Você é o planejador de um digest de notícias mundiais.
 
+TEMA/PESQUISA: "${topic}"
+
 DATA/HORA ATUAL: use a tool "now" se disponível.
 
 OBJETIVO
-Gerar de 6 a 10 consultas de busca diversificadas e atuais para recuperar as principais notícias do mundo nas últimas 24–48 horas.
+Gerar de 6 a 10 consultas de busca diversificadas e atuais sobre o tema "${topic}", recuperando as principais notícias relacionadas nas últimas 24–48 horas.
 
 COBERTURA OBRIGATÓRIA
-- Manchetes gerais / top stories
-- Política internacional
-- Economia / mercados
-- Tecnologia / ciência
-- Conflitos / geopolítica
-- Clima / meio ambiente (se houver relevância)
+- Foco principal no tema "${topic}"
 - Uma query em inglês e o restante em português (ou misto)
+- Complemente com cobertura de manchetes gerais se o tema permitir
 
 REGRAS
 - Prefira termos que puxem notícias recentes ("hoje", "últimas horas", "breaking", "latest")
