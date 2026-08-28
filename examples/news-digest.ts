@@ -9,9 +9,9 @@
  *
  * Fluxo:
  *   1. Planejamento de consultas (6-10 queries diversificadas)
- *   2. Recuperação de manchetes (exa_search via MCP)
+ *   2. Recuperação de manchetes (web_search_exa via MCP)
  *   3. Curadoria e ranking (8-12 histórias)
- *   4. Enriquecimento (exa_fetch via MCP nas top 5-7)
+ *   4. Enriquecimento (web_fetch_exa via MCP nas top 5-7, batch)
  *   5. Redação do digest (estilo glow)
  *   6. Checklist final (file_read para verificar)
  *
@@ -50,6 +50,151 @@ const num = (
   if (typeof v === "string" && !v.trim()) return fallback ?? undefined;
   const value = Number(v);
   return Number.isFinite(value) ? value : fallback ?? undefined;
+};
+
+// ── JSON / structured-output helpers ─────────────────────────────────────────
+
+const normalizeText = (s: string): string =>
+  s.replace(/\u00a0/g, " ").replace(/[\u2010-\u2015]/g, "-");
+
+const extractBalancedBlocks = (s: string): string[] => {
+  const blocks: string[] = [];
+  const stack: number[] = [];
+  const closing: Record<string, string> = { "{": "}", "[": "]" };
+  const opening: Record<string, string> = { "}": "{", "]": "[" };
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (closing[ch]) {
+      stack.push(i);
+    } else if (opening[ch]) {
+      const start = stack.pop();
+      if (start === undefined) {
+        stack.length = 0;
+        continue;
+      }
+      if (s[start] !== opening[ch]) {
+        stack.length = 0;
+        continue;
+      }
+      if (stack.length === 0) blocks.push(s.slice(start, i + 1));
+    }
+  }
+  return blocks;
+};
+
+const safeParseJSON = (content: string): unknown => {
+  const cleaned = normalizeText(content)
+    .replace(/```(?:json)?\s*/gi, "")
+    .replace(/```+/g, "");
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    for (const block of extractBalancedBlocks(cleaned)) {
+      try {
+        return JSON.parse(block);
+      } catch {
+        // tenta o próximo bloco balanceado
+      }
+    }
+  }
+  return null;
+};
+
+const asStories = (
+  parsed: unknown,
+  ...variants: string[]
+): Array<Record<string, unknown>> => {
+  if (parsed === null || typeof parsed !== "object") return [];
+  if (Array.isArray(parsed)) return parsed as Array<Record<string, unknown>>;
+  for (const key of variants) {
+    const v = (parsed as Record<string, unknown>)[key];
+    if (Array.isArray(v)) return v as Array<Record<string, unknown>>;
+  }
+  return [];
+};
+
+const parseMarkdownTable = (
+  content: string,
+): Array<Record<string, unknown>> => {
+  const normalized = normalizeText(content);
+  if (!normalized.includes("|")) return [];
+
+  const lines = normalized.split("\n");
+  let headerIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].includes("Título") || lines[i].includes("Title")) {
+      headerIdx = i;
+      break;
+    }
+  }
+  if (headerIdx < 0) return [];
+
+  const headers = lines[headerIdx]
+    .split("|")
+    .slice(1, -1)
+    .map((h) => h.trim().toLowerCase());
+
+  const rows: Record<string, string>[] = [];
+  for (let i = headerIdx + 2; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line.startsWith("|") || /^\|\s*-{2,}/.test(line)) continue;
+    const cells = line.split("|").slice(1, -1).map((c) => c.trim());
+    if (cells.length < headers.length) continue;
+    const row: Record<string, string> = {};
+    headers.forEach((h, idx) => {
+      row[h] = cells[idx] ?? "";
+    });
+    rows.push(row);
+  }
+
+  return rows.map((row) => ({
+    title: row["título"] ?? row["title"] ?? "",
+    url: row["url"] ?? "",
+    source: row["fonte"] ?? row["source"] ?? "",
+    category: row["categoria"] ?? row["category"] ?? "",
+    snippet: row["snippet"] ?? "",
+    summary: row["resumo"] ?? row["summary"] ?? "",
+    published: row["publicado"] ?? row["published"] ?? "",
+    key_facts: row["fatos-chave"] ?? row["key_facts"] ?? "",
+    why: row["por que"] ?? row["razão"] ?? row["why"] ?? "",
+  }));
+};
+
+const parseStories = (
+  content: string,
+  ...variants: string[]
+): Array<Record<string, unknown>> => {
+  const fromJson = asStories(safeParseJSON(content), ...variants);
+  if (fromJson.length > 0) return fromJson;
+  return parseMarkdownTable(content);
+};
+
+const assertStories = (
+  label: string,
+  items: Array<Record<string, unknown>>,
+): void => {
+  if (items.length === 0) {
+    throw new Error(
+      `ABORTADO: ${label} retornou lista vazia. Nada a digerir — re-execute com outro tema.`,
+    );
+  }
+};
+
+const saveArtifact = async (name: string, data: unknown): Promise<string> => {
+  const path = `${OUT_DIR}/artifact-${name}`;
+  await Deno.writeTextFile(path, JSON.stringify(data ?? [], null, 2));
+  return path;
 };
 
 const tool = (
@@ -223,6 +368,13 @@ Gerar de 6 a 10 consultas de busca diversificadas e atuais sobre o tema "${topic
 
 COBERTURA OBRIGATÓRIA
 - Foco principal no tema "${topic}"
+- Manchetes gerais / top stories
+- Politica Internacional
+- Economia / Mercados
+- Tecnologias / Ciência
+- Conflitos / Geopolitica
+- Clima / Meio ambiente (se houver relevância)
+- Saúde / Educação
 - Uma query em inglês e o restante em português (ou misto)
 - Complemente com cobertura de manchetes gerais se o tema permitir
 
@@ -242,7 +394,7 @@ SAÍDA EXCLUSIVA
     })),
     maxIterations: 3,
     onThinking: gray,
-    onContent: (chunk) => writeChunk(chunk),
+    //onContent: (chunk) => writeChunk(chunk),
     onToolCall,
     onToolResult,
   })
@@ -294,7 +446,7 @@ SAÍDA EXCLUSIVA
     })),
     maxIterations: 14,
     onThinking: gray,
-    onContent: (chunk) => writeChunk(chunk),
+    //onContent: (chunk) => writeChunk(chunk),
     onToolCall,
     onToolResult,
   })
@@ -333,8 +485,14 @@ SAÍDA EXCLUSIVA
     }
   ]
 }`,
-    transform: (prev) =>
-      `MANCHETES RECUPERADAS:\n${prev.content}\n\nCuradorie e classifique.`,
+    transform: (prev) => {
+      const headlines = parseStories(prev.content, "headlines");
+      assertStories("Estágio 2 (manchetes recuperadas)", headlines);
+      return (
+        `MANCHETES RECUPERADAS (JSON limpo):\n` +
+        `${JSON.stringify(headlines, null, 2)}\n\nCuradorie e classifique.`
+      );
+    },
     tools: [],
     toolHandlers: ALL_HANDLERS,
     format: zodFormat(z.object({
@@ -348,7 +506,7 @@ SAÍDA EXCLUSIVA
     })),
     maxIterations: 3,
     onThinking: gray,
-    onContent: (chunk) => writeChunk(chunk),
+    //onContent: (chunk) => writeChunk(chunk),
     onToolCall,
     onToolResult,
   })
@@ -360,11 +518,11 @@ SAÍDA EXCLUSIVA
     numCtx: 32768,
     system: `Você enriquece as notícias selecionadas.
 
-PARA CADA URL DAS 5–7 HISTÓRIAS MAIS IMPORTANTES:
-1. Use a ferramenta de fetch de conteúdo para ler a página.
-2. Extraia um resumo factual de 2 a 4 frases.
+PARA AS 5–7 HISTÓRIAS MAIS IMPORTANTES:
+1. Chame a ferramenta de fetch UMA ÚNICA VEZ com TODAS as URLs num único array (o web_fetch_exa aceita múltiplas URLs) — não chame uma URL por vez.
+2. Extraia um resumo factual de 2 a 4 frases de cada página retornada.
 3. Identifique data de publicação se disponível.
-4. Extraia 1–2 fatos-chave (números, nomes, locais).
+4. Extraia 1–2 fatos-chave de cada (números, nomes, locais).
 
 REGRAS
 - Não invente informações.
@@ -385,8 +543,16 @@ SAÍDA EXCLUSIVA — RETORNE APENAS JSON VÁLIDO, NÃO TABELA MARKDOWN:
     }
   ]
 }`,
-    transform: (prev) =>
-      `HISTÓRIAS SELECIONADAS:\n${prev.content}\n\nEnriqueça as 5–7 mais importantes.`,
+    transform: (prev) => {
+      const selected = parseStories(prev.content, "selected");
+      assertStories("Estágio 3 (histórias selecionadas)", selected);
+      return (
+        `HISTÓRIAS SELECIONADAS (JSON limpo):\n` +
+        `${
+          JSON.stringify(selected, null, 2)
+        }\n\nEnriqueça as 5–7 mais importantes.`
+      );
+    },
     tools: pick("web_fetch_exa"),
     toolHandlers: ALL_HANDLERS,
     format: zodFormat(z.object({
@@ -400,9 +566,9 @@ SAÍDA EXCLUSIVA — RETORNE APENAS JSON VÁLIDO, NÃO TABELA MARKDOWN:
         key_facts: z.array(z.string()).optional(),
       })),
     })),
-    maxIterations: 16,
+    maxIterations: 6,
     onThinking: gray,
-    onContent: (chunk) => writeChunk(chunk),
+    //onContent: (chunk) => writeChunk(chunk),
     onToolCall,
     onToolResult,
   })
@@ -480,58 +646,12 @@ RETORNE:
   "stories": número_de_historias
 }`,
     transform: (prev) => {
-      let stories: Array<
-        Record<string, unknown>
-      > = [];
-
-      // 1. Try JSON parse (ideal path)
-      try {
-        const parsed = JSON.parse(prev.content);
-        stories = parsed.enriched ?? parsed.selected ?? parsed.headlines ??
-          (Array.isArray(parsed) ? parsed : []);
-      } catch {
-        // not JSON — try markdown table below
-      }
-
-      // 2. Try markdown table parse (fallback when model ignores format)
-      if (stories.length === 0 && prev.content.includes("|")) {
-        const lines = prev.content.split("\n");
-        let headerIdx = -1;
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].includes("Título") || lines[i].includes("Title")) {
-            headerIdx = i;
-            break;
-          }
-        }
-        if (headerIdx >= 0) {
-          const headers = lines[headerIdx]
-            .split("|")
-            .slice(1, -1)
-            .map((h) => h.trim().toLowerCase());
-          for (let i = headerIdx + 2; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line.startsWith("|") || /^|\s*---/.test(line)) continue;
-            const cells = line.split("|").slice(1, -1).map((c) => c.trim());
-            if (cells.length < headers.length) continue;
-            const row: Record<string, string> = {};
-            headers.forEach((h, idx) => {
-              row[h] = cells[idx] ?? "";
-            });
-            stories.push({
-              title: row["título"] ?? row["title"] ?? "",
-              url: row["url"] ?? "",
-              source: row["fonte"] ?? row["source"] ?? "",
-              category: row["categoria"] ?? row["category"] ?? "",
-              summary: row["resumo"] ?? row["summary"] ?? "",
-              published: row["publicado"] ?? row["published"] ?? "",
-              key_facts: row["fatos‑chave"] ?? row["key_facts"] ?? "",
-            });
-          }
-        }
-      }
-
+      const stories = parseStories(prev.content, "enriched");
+      assertStories("Estágio 4 (histórias enriquecidas)", stories);
       return (
-        `HISTÓRIAS ENRIQUECIDAS:\n${JSON.stringify(stories, null, 2)}\n\n` +
+        `HISTÓRIAS ENRIQUECIDAS (JSON limpo):\n${
+          JSON.stringify(stories, null, 2)
+        }\n\n` +
         `Redija o digest em Markdown seguindo a estrutura obrigatória.\n` +
         `Salve com file_write em: ${OUTPUT_FILE}`
       );
@@ -540,7 +660,7 @@ RETORNE:
     toolHandlers: ALL_HANDLERS,
     maxIterations: 4,
     onThinking: gray,
-    onContent: (chunk) => writeChunk(chunk),
+    //onContent: (chunk) => writeChunk(chunk),
     onToolCall,
     onToolResult,
   })
@@ -577,23 +697,38 @@ RETORNE:
     })),
     maxIterations: 4,
     onThinking: gray,
-    onContent: (chunk) => writeChunk(chunk),
+    //onContent: (chunk) => writeChunk(chunk),
     onToolCall,
     onToolResult,
   })
   .execute();
 
-// ── Cleanup ──────────────────────────────────────────────────────────────────
+// ── .execute() retorna → Cleanup ─────────────────────────────────────────────
 
 if (mcp.bridge) {
   await mcp.bridge.close();
 }
+
+// ── Artefatos intermediários (debug / reuso / verificação) ──────────────────
+
+const stageData = results.map((r) => r.content);
+const queries = asStories(safeParseJSON(stageData[0] ?? ""), "queries");
+await saveArtifact("queries.json", queries);
+const headlines = parseStories(stageData[1] ?? "", "headlines");
+await saveArtifact("headlines.json", headlines);
+const selected = parseStories(stageData[2] ?? "", "selected");
+await saveArtifact("selected.json", selected);
+const enriched = parseStories(stageData[3] ?? "", "enriched");
+await saveArtifact("enriched.json", enriched);
 
 // ── Relatório final ──────────────────────────────────────────────────────────
 
 console.log(`\n✅ Digest concluído.`);
 console.log(`📄 Arquivo: ${OUTPUT_FILE}`);
 console.log(`🔧 Chamadas de ferramentas: ${totalToolCalls}`);
+console.log(
+  `ℹ️ manchetes=${headlines.length} selecionadas=${selected.length} enriquecidas=${enriched.length}`,
+);
 console.log(`📊 Estágios:`);
 
 results.forEach((result, index) => {
@@ -603,7 +738,7 @@ results.forEach((result, index) => {
   );
 });
 
-// ── Verificação ──────────────────────────────────────────────────────────────
+// ── Verificação programática ─────────────────────────────────────────────────
 
 let failed = 0;
 const assert = (name: string, ok: boolean, detail = "") => {
@@ -615,6 +750,11 @@ const assert = (name: string, ok: boolean, detail = "") => {
 };
 
 console.log("\n=== Checks ===");
+
+const enrichedExists = await Deno.stat(`${OUT_DIR}/artifact-enriched.json`)
+  .then(() => true)
+  .catch(() => false);
+assert("Artefato enriched.json gravado", enrichedExists);
 
 const exists = await Deno.stat(OUTPUT_FILE).then(() => true).catch(() => false);
 assert("Arquivo existe", exists, OUTPUT_FILE);
@@ -628,6 +768,24 @@ if (exists) {
   assert("Tem separador ---", /^---$/m.test(body));
   assert("Seção Destaques", /Destaques/i.test(body));
   assert("Seção Por categoria", /Por categoria/i.test(body));
+  assert("Sem 'nenhuma notícia'", !/nenhuma not[íi]cia/i.test(body));
+
+  const linkCount =
+    (body.match(/\[ler mais\]\(https?:\/\/[^)]+\)/g) ?? []).length;
+  assert(
+    `Digest tem ${linkCount} link(s) 'ler mais'`,
+    linkCount >= Math.min(3, enriched.length),
+    `esperado >= ${Math.min(3, enriched.length)}`,
+  );
+
+  const presentUrls = enriched.filter((e) => {
+    const url = String(e.url ?? "");
+    return url.length > 0 && body.includes(url);
+  }).length;
+  assert(
+    `URLs do enriquecimento no body (${presentUrls}/${enriched.length})`,
+    presentUrls >= Math.min(1, enriched.length),
+  );
 }
 
 if (failed) {
