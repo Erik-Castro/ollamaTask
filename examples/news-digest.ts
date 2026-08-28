@@ -1,4 +1,7 @@
-#!/bin/env -S deno run --allow-net --allow-read --allow-write --allow-env
+#!/bin/env -S deno run -WRNE
+
+const rootDir = new URL(".", import.meta.url).pathname;
+Deno.chdir(rootDir);
 
 /**
  * news-digest.ts
@@ -355,8 +358,10 @@ const pick = (...names: string[]) =>
 
 const topic = Deno.args[0]?.trim() || "notícias recentes do mundo";
 
-const OUT_DIR = "data/news";
+const OUT_DIR = `${Deno.env.get("HOME") || Deno.env.get("USERPROFILE") || "."}/news`;
 await Deno.mkdir(OUT_DIR, { recursive: true });
+
+// Debug console.log(OUT_DIR); Deno.exit(0);
 
 const now = new Date();
 const dateStamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
