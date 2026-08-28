@@ -6,12 +6,12 @@
  * Pipeline de notícias recentes → Markdown limpo para glow
  *
  * Fluxo:
- *   1. Planejamento de consultas
+ *   1. Planejamento de consultas (6-10 queries diversificadas)
  *   2. Recuperação de manchetes (web_search)
- *   3. Curadoria e ranking
- *   4. Enriquecimento (web_fetch nas top stories)
- *   5. Redação do digest
- *   6. Gravação
+ *   3. Curadoria e ranking (8-12 histórias)
+ *   4. Enriquecimento (web_fetch nas top 5-7)
+ *   5. Redação do digest (estilo glow)
+ *   6. Checklist final (file_read para verificar)
  *
  * Uso:
  *   ./news-digest.ts
@@ -28,12 +28,23 @@ import type {
 import { Now } from "../src/tools/Now.ts";
 import { WebSearch } from "../src/tools/WebSearch.ts";
 import { WebFetch } from "../src/tools/WebFetch.ts";
+import { FileRead } from "../src/tools/FileRead.ts";
 import { FileWrite } from "../src/tools/FileWrite.ts";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const str = (v: unknown, fb = ""): string =>
   v === undefined || v === null ? fb : String(v);
+
+const num = (
+  v: unknown,
+  fallback: number | null = null,
+): number | undefined => {
+  if (v === undefined || v === null) return fallback ?? undefined;
+  if (typeof v === "string" && !v.trim()) return fallback ?? undefined;
+  const value = Number(v);
+  return Number.isFinite(value) ? value : fallback ?? undefined;
+};
 
 const tool = (
   name: string,
@@ -79,6 +90,16 @@ const ALL_TOOLS: ToolDefinition[] = [
     ["url"],
   ),
   tool(
+    "file_read",
+    "Lê um arquivo de texto existente.",
+    {
+      path: { type: "string" },
+      maxChars: { type: "integer" },
+      offset: { type: "integer" },
+    },
+    ["path"],
+  ),
+  tool(
     "file_write",
     "Escreve conteúdo em arquivo local.",
     {
@@ -106,7 +127,15 @@ const handlers: ToolHandler[] = [
     name: "web_fetch",
     execute: (a) =>
       WebFetch(str(a.url), {
-        maxChars: typeof a.maxChars === "number" ? a.maxChars : 4000,
+        maxChars: num(a.maxChars) ?? 4000,
+      }),
+  },
+  {
+    name: "file_read",
+    execute: (a) =>
+      FileRead(str(a.path), {
+        maxChars: num(a.maxChars) ?? 2000,
+        offset: num(a.offset) ?? 0,
       }),
   },
   {
@@ -137,7 +166,10 @@ const topic = Deno.args[0]?.trim() || "notícias recentes do mundo";
 
 const OUT_DIR = "data/news";
 await Deno.mkdir(OUT_DIR, { recursive: true });
-const OUTPUT_FILE = `${OUT_DIR}/digest-${Date.now()}.md`;
+
+const now = new Date();
+const dateStamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
+const OUTPUT_FILE = `${OUT_DIR}/digest-${dateStamp}.md`;
 
 // ── Console helpers ──────────────────────────────────────────────────────────
 
@@ -168,27 +200,30 @@ const results = await ollamaPipeline
   // ============================================================
   .stage({
     model: "qwen3.5:2b",
-    system: `Você é o planejador de um digest de notícias.
+    system: `Você é o planejador de um digest de notícias mundiais.
 
-TÓPICO: "${topic}"
-
-DATA/HORA ATUAL: use a tool "now" para obter.
+DATA/HORA ATUAL: use a tool "now" se disponível.
 
 OBJETIVO
-Gerar consultas de busca diversificadas para cobrir as notícias mais relevantes e recentes sobre o tópico.
+Gerar de 6 a 10 consultas de busca diversificadas e atuais para recuperar as principais notícias do mundo nas últimas 24–48 horas.
 
-PRODUZA ATÉ 6 CONSULTAS.
-- Inclua o tópico em português e inglês quando aplicável.
-- Varie entre termos gerais e específicos.
-- Use filtros de tempo: "d" (últimas 24h) ou "w" (última semana).
-- Não repita consultas quase idênticas.
+COBERTURA OBRIGATÓRIA
+- Manchetes gerais / top stories
+- Política internacional
+- Economia / mercados
+- Tecnologia / ciência
+- Conflitos / geopolítica
+- Clima / meio ambiente (se houver relevância)
+- Uma query em inglês e o restante em português (ou misto)
 
-SAÍDA EXCLUSIVA (JSON):
+REGRAS
+- Prefira termos que puxem notícias recentes ("hoje", "últimas horas", "breaking", "latest")
+- Evite queries genéricas demais ("notícias")
+- Não inclua sites específicos na query (deixe o buscador decidir)
+
+SAÍDA EXCLUSIVA
 {
-  "queries": [
-    { "text": "...", "timeRange": "d" },
-    { "text": "...", "timeRange": "w" }
-  ]
+  "queries": ["...", "..."]
 }`,
     tools: pick("now"),
     toolHandlers: safeHandlers,
@@ -206,27 +241,27 @@ SAÍDA EXCLUSIVA (JSON):
     system: `Você é o agente de recuperação de notícias.
 
 OBJETIVO
-Buscar manchetes e snippets relevantes usando as consultas fornecidas.
+Executar as consultas recebidas e coletar um conjunto diversificado de manchetes promissoras.
 
 PROCEDIMENTO
-1. Execute web_search para cada consulta.
-2. Coleque títulos, snippets e links.
-3. Elimine duplicatas (mesmo URL).
-4. Priorize notícias das últimas 24-48h.
+1. Faça web_search para cada query útil.
+2. Analise título + snippet + URL.
+3. Descarte links irrelevantes, clickbait óbvio ou muito antigos.
+4. Priorize fontes reconhecidas (BBC, Reuters, AP, Guardian, Folha, G1, CNN, NYT, etc.).
+5. Elimine duplicatas de praticamente a mesma história.
 
-NÃO FAÇA
-- Não invente URLs.
-- Não selecione links genéricos ou institucionais sem notícia real.
-- Não busque mais de 4 consultas (economize chamadas).
+QUANTIDADE
+Tente ficar entre 10 e 18 manchetes distintas.
 
-SAÍDA EXCLUSIVA (JSON):
+SAÍDA EXCLUSIVA
 {
   "headlines": [
     {
       "title": "...",
-      "snippet": "...",
-      "url": "...",
-      "relevance": "high | medium | low"
+      "url": "https://...",
+      "source": "nome da fonte",
+      "snippet": "resumo curto do snippet",
+      "category": "política|economia|tecnologia|conflito|clima|geral"
     }
   ]
 }`,
@@ -234,7 +269,7 @@ SAÍDA EXCLUSIVA (JSON):
       `CONSULTAS PLANEJADAS:\n${prev.content}\n\nExecute as buscas agora.`,
     tools: pick("web_search"),
     toolHandlers: safeHandlers,
-    maxIterations: 12,
+    maxIterations: 14,
     onThinking: gray,
     onContent: (chunk) => writeChunk(chunk),
     onToolCall,
@@ -245,31 +280,32 @@ SAÍDA EXCLUSIVA (JSON):
   // ============================================================
   .then({
     model: "qwen3.5:2b",
-    system: `Você é o curador de um digest de notícias.
+    system: `Você é o editor-chefe de um digest diário de notícias.
 
 OBJETIVO
-Selecionar as 5-8 melhores histórias e ordenar por relevância.
+Selecionar as 8 a 12 histórias mais importantes e interessantes do conjunto recebido.
 
-CRITÉRIOS DE SELEÇÃO
-1. Relevância direta ao tópico.
-2. Novidade / impacto.
-3. Qualidade aparente da fonte.
-4. Diversidade de perspectivas.
+CRITÉRIOS DE PRIORIDADE
+1. Impacto global ou relevância geopolítica
+2. Novidade (preferir as mais recentes)
+3. Diversidade de temas e regiões
+4. Qualidade da fonte
+5. Interesse humano / clareza da manchete
 
 REGRAS
-- Mantenha no mínimo 5 histórias.
-- Máximo 8.
-- Não inclua notícias sem URL válida.
-- Se houver poucas notícias relevantes, mantenha todas.
+- Não invente notícias.
+- Não repita a mesma história com URLs diferentes.
+- Prefira qualidade a quantidade.
 
-SAÍDA EXCLUSIVA (JSON):
+SAÍDA EXCLUSIVA
 {
-  "top_stories": [
+  "selected": [
     {
       "title": "...",
-      "snippet": "...",
       "url": "...",
-      "why": "por que esta história é importante"
+      "source": "...",
+      "category": "...",
+      "why": "razão curta da escolha"
     }
   ]
 }`,
@@ -284,61 +320,50 @@ SAÍDA EXCLUSIVA (JSON):
     onToolResult,
   })
   // ============================================================
-  // 4. ENRIQUECIMENTO (web_fetch nas top 3)
+  // 4. ENRIQUECIMENTO (web_fetch nas top 5-7)
   // ============================================================
   .then({
     model: "qwen3.5:2b",
-    system: `Você é o agente de enriquecimento de notícias.
+    system: `Você enriquece as notícias selecionadas.
 
-OBJETIVO
-Ler o conteúdo completo das 3 histórias mais importantes para enriquecer o digest.
+PARA CADA URL DAS 5–7 HISTÓRIAS MAIS IMPORTANTES:
+1. Use web_fetch.
+2. Extraia um resumo factual de 2 a 4 frases.
+3. Identifique data de publicação se disponível.
+4. Extraia 1–2 fatos-chave (números, nomes, locais).
 
-PROCEDIMENTO
-1. Para cada uma das 3 primeiras histórias, use web_fetch na URL.
-2. Extraia: título completo, 1-2 parágrafos-chave, dados numéricos se houver.
-3. Se web_fetch falhar, use apenas o snippet original.
+REGRAS
+- Não invente informações.
+- Se a página falhar, mantenha apenas o título + snippet original.
+- Mantenha o tom neutro e informativo.
 
-NÃO FAÇA
-- Não busque mais de 3 URLs.
-- Não invente conteúdo não encontrado na página.
-
-SAÍDA EXCLUSIVA (JSON):
-{
-  "enriched": [
-    {
-      "title": "...",
-      "url": "...",
-      "key_points": ["..."],
-      "data": ["..."]
-    }
-  ]
-}`,
+SAÍDA
+Retorne a lista enriquecida no mesmo formato, adicionando os campos:
+"summary", "published", "key_facts"`,
     transform: (prev) =>
-      `HISTÓRIAS SELECIONADAS:\n${prev.content}\n\nEnriqueça as top 3.`,
+      `HISTÓRIAS SELECIONADAS:\n${prev.content}\n\nEnriqueça as 5–7 mais importantes.`,
     tools: pick("web_fetch"),
     toolHandlers: safeHandlers,
-    maxIterations: 8,
+    maxIterations: 16,
     onThinking: gray,
     onContent: (chunk) => writeChunk(chunk),
     onToolCall,
     onToolResult,
   })
   // ============================================================
-  // 5. REDAÇÃO DO DIGEST
+  // 5. REDAÇÃO DO DIGEST (estilo glow)
   // ============================================================
   .then({
     model: "qwen3.5:2b",
-    system: `Você é um redator de digest de notícias.
+    system: `Você é o redator final de um digest de notícias para terminal.
 
 OBJETIVO
-Produzir um digest limpo e pronto para ser exibido com glow (renderizador Markdown).
+Produzir um Markdown limpo, elegante e legível no glow.
 
-FORMATO DE SAÍDA — Markdown puro:
+ESTRUTURA OBRIGATÓRIA
 
-# 📰 Digest: ${topic}
-
-> ${
-      new Date().toLocaleDateString("pt-BR", {
+# Digest de Notícias — ${
+      now.toLocaleDateString("pt-BR", {
         weekday: "long",
         year: "numeric",
         month: "long",
@@ -346,53 +371,103 @@ FORMATO DE SAÍDA — Markdown puro:
       })
     }
 
----
-
-## [Título da notícia 1](url)
-
-Snippet ou resumo em 1-2 frases. Dados numéricos quando disponíveis.
+> Atualizado em ${
+      now.toLocaleTimeString("pt-BR")
+    } · Fonte: buscas web + curadoria automática
 
 ---
 
-## [Título da notícia 2](url)
+## Destaques
 
-Snippet ou resumo em 1-2 frases.
+- **Título da notícia** — fonte
+  Resumo em 2–3 frases. [ler mais](url)
+
+- **Outra notícia** — fonte
+  Resumo...
 
 ---
 
-... (repita para cada notícia)
+## Por categoria
+
+### Política & Geopolítica
+...
+
+### Economia
+...
+
+### Tecnologia & Ciência
+...
+
+### Outros
+...
 
 ---
 
-*Digest gerado automaticamente em [data/hora].*
+_Gerado automaticamente · Pipeline news-digest_
 
-REGRAS
-1. Use EXATAMENTE o formato acima.
-2. Cada notícia vira um heading ## com link.
-3. Abaixo do heading, 1-2 frases de resumo.
-4. Separe notícias com ---.
-5. Não inclua imagens.
-6. Não inclua código.
-7. Não inclua emojis além do 📰 no título.
-8. Use dados numéricos quando disponíveis.
-9. Seja conciso: máximo 3 frases por notícia.
+REGRAS DE ESTILO
+- Use **negrito** nos títulos.
+- Links no formato Markdown: [ler mais](url)
+- Frases curtas e objetivas.
+- Sem emojis excessivos (no máximo 1–2 se fizer sentido).
+- Sem introduções longas ou conclusões filosóficas.
+- Prefira legibilidade no terminal (linhas não muito longas).
 
-SALVE O ARQUIVO COMO: ${OUTPUT_FILE}
+SALVE O ARQUIVO COM file_write em:
+"${OUTPUT_FILE}"
 
-RETORNE EXCLUSIVAMENTE:
+RETORNE:
 {
   "path": "${OUTPUT_FILE}",
-  "count": número_de_notícias
+  "ok": true,
+  "stories": número_de_historias
 }`,
     transform: (prev) => {
-      const enriched = JSON.parse(prev.content);
-      const stories = enriched.enriched || [];
+      let enriched = [];
+      try {
+        enriched = JSON.parse(prev.content).enriched ||
+          JSON.parse(prev.content);
+      } catch {
+        enriched = [];
+      }
       return (
-        `HISTÓRIAS ENRIQUECIDAS:\n${JSON.stringify(stories, null, 2)}\n\n` +
-        `Redija o digest em Markdown. Salve com file_write em: ${OUTPUT_FILE}`
+        `HISTÓRIAS ENRIQUECIDAS:\n${JSON.stringify(enriched, null, 2)}\n\n` +
+        `Redija o digest em Markdown seguindo a estrutura obrigatória.\n` +
+        `Salve com file_write em: ${OUTPUT_FILE}`
       );
     },
     tools: pick("file_write"),
+    toolHandlers: safeHandlers,
+    maxIterations: 4,
+    onThinking: gray,
+    onContent: (chunk) => writeChunk(chunk),
+    onToolCall,
+    onToolResult,
+  })
+  // ============================================================
+  // 6. CHECKLIST FINAL
+  // ============================================================
+  .then({
+    model: "qwen3.5:2b",
+    system: `Verifique o arquivo gerado.
+
+1. file_read do digest em: "${OUTPUT_FILE}"
+2. Confirme se contém:
+   - Título principal (h1)
+   - Pelo menos 6 notícias
+   - Links Markdown [ler mais](url)
+   - Separadores ---
+   - Seção "Destaques"
+   - Seção "Por categoria"
+3. Responda apenas:
+{
+  "ok": true,
+  "path": "${OUTPUT_FILE}",
+  "stories": N
+}`,
+    transform: (prev) =>
+      `Resultado da redação: ${prev.content}\n\nLeia o arquivo gerado e verifique.`,
+    tools: pick("file_read"),
     toolHandlers: safeHandlers,
     maxIterations: 4,
     onThinking: gray,
@@ -434,10 +509,13 @@ assert("Arquivo existe", exists, OUTPUT_FILE);
 
 if (exists) {
   const body = await Deno.readTextFile(OUTPUT_FILE);
-  assert("Não vazio", body.trim().length > 200);
+  assert("Não vazio", body.trim().length > 300);
+  assert("Tem título h1", /^# /m.test(body));
   assert("Tem heading ##", /^## /m.test(body));
-  assert("Tem link http", /https?:\/\//.test(body));
+  assert("Tem link Markdown", /\[.*\]\(https?:\/\/.*\)/.test(body));
   assert("Tem separador ---", /^---$/m.test(body));
+  assert("Seção Destaques", /Destaques/i.test(body));
+  assert("Seção Por categoria", /Por categoria/i.test(body));
 }
 
 if (failed) {
