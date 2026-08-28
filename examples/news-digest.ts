@@ -5,11 +5,13 @@
  *
  * Pipeline de notícias recentes → Markdown limpo para glow
  *
+ * Usa MCP remoto (Exa) para busca e fetch de conteúdo.
+ *
  * Fluxo:
  *   1. Planejamento de consultas (6-10 queries diversificadas)
- *   2. Recuperação de manchetes (web_search)
+ *   2. Recuperação de manchetes (exa_search via MCP)
  *   3. Curadoria e ranking (8-12 histórias)
- *   4. Enriquecimento (web_fetch nas top 5-7)
+ *   4. Enriquecimento (exa_fetch via MCP nas top 5-7)
  *   5. Redação do digest (estilo glow)
  *   6. Checklist final (file_read para verificar)
  *
@@ -25,9 +27,8 @@ import type {
   ToolDefinition,
   ToolHandler,
 } from "../src/ollamaTask.ts";
+import { MCPBridge } from "../src/mcp/client.ts";
 import { Now } from "../src/tools/Now.ts";
-import { WebSearch } from "../src/tools/WebSearch.ts";
-import { WebFetch } from "../src/tools/WebFetch.ts";
 import { FileRead } from "../src/tools/FileRead.ts";
 import { FileWrite } from "../src/tools/FileWrite.ts";
 
@@ -60,34 +61,13 @@ const tool = (
   },
 });
 
-// ── Tool definitions ─────────────────────────────────────────────────────────
+// ── Local tool definitions ───────────────────────────────────────────────────
 
-const ALL_TOOLS: ToolDefinition[] = [
+const LOCAL_TOOLS: ToolDefinition[] = [
   tool(
     "now",
     "Data/hora atual: { iso, unix, timezone, utcOffsetMinutes }.",
     {},
-  ),
-  tool(
-    "web_search",
-    "Busca na web via DuckDuckGo. Retorna { results: [{ title, snippet, link }] }.",
-    {
-      query: { type: "string", description: "Termo de busca" },
-      timeRange: {
-        type: "string",
-        description: "Filtro temporal: d (dia), w (semana), m (mês)",
-      },
-    },
-    ["query"],
-  ),
-  tool(
-    "web_fetch",
-    "Baixa conteúdo de uma URL. Retorna { url, title, text }.",
-    {
-      url: { type: "string" },
-      maxChars: { type: "integer" },
-    },
-    ["url"],
   ),
   tool(
     "file_read",
@@ -110,26 +90,8 @@ const ALL_TOOLS: ToolDefinition[] = [
   ),
 ];
 
-// ── Handlers ─────────────────────────────────────────────────────────────────
-
-const handlers: ToolHandler[] = [
+const LOCAL_HANDLERS: ToolHandler[] = [
   { name: "now", execute: () => Now() },
-  {
-    name: "web_search",
-    execute: async (a) => {
-      const result = await WebSearch(str(a.query), {
-        timeRange: str(a.timeRange) as "d" | "w" | "m" | undefined,
-      });
-      return { results: result.results };
-    },
-  },
-  {
-    name: "web_fetch",
-    execute: (a) =>
-      WebFetch(str(a.url), {
-        maxChars: num(a.maxChars) ?? 4000,
-      }),
-  },
   {
     name: "file_read",
     execute: (a) =>
@@ -144,7 +106,7 @@ const handlers: ToolHandler[] = [
   },
 ];
 
-const safeHandlers: ToolHandler[] = handlers.map((h) => ({
+const safeLocalHandlers: ToolHandler[] = LOCAL_HANDLERS.map((h) => ({
   name: h.name,
   execute: async (args: ToolArgs) => {
     try {
@@ -155,10 +117,54 @@ const safeHandlers: ToolHandler[] = handlers.map((h) => ({
   },
 }));
 
-// ── Pick helpers ─────────────────────────────────────────────────────────────
+// ── MCP connection (Exa) ─────────────────────────────────────────────────────
+
+const EXA_URL = "https://mcp.exa.ai/mcp";
+
+async function connectMCP(url: string, retries = 3): Promise<{
+  bridge: MCPBridge | null;
+  definitions: ToolDefinition[];
+  handlers: ToolHandler[];
+}> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      console.log(
+        `Connecting to Exa MCP server (attempt ${attempt}/${retries})...`,
+      );
+      const bridge = await MCPBridge.connect({ type: "remote", url });
+      const { definitions, handlers } = bridge.getTools();
+      console.log(`Found ${definitions.length} MCP tools:`);
+      for (const d of definitions) {
+        console.log(`  - ${d.function.name}: ${d.function.description}`);
+      }
+      return { bridge, definitions, handlers };
+    } catch (error) {
+      console.error(
+        `MCP connection attempt ${attempt} failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      if (attempt < retries) {
+        console.log(`Retrying in 2s...`);
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+  }
+  console.warn(
+    "⚠️  MCP connection failed. Continuing without MCP tools.",
+  );
+  return { bridge: null, definitions: [], handlers: [] };
+}
+
+const mcp = await connectMCP(EXA_URL);
+
+// ── Merged tools ─────────────────────────────────────────────────────────────
+
+const ALL_DEFINITIONS = [...LOCAL_TOOLS, ...mcp.definitions];
+const ALL_HANDLERS = [...safeLocalHandlers, ...mcp.handlers];
 
 const pick = (...names: string[]) =>
-  ALL_TOOLS.filter((t) => names.includes(t.function.name));
+  ALL_DEFINITIONS.filter((t) => names.includes(t.function.name));
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
@@ -196,10 +202,11 @@ const onToolResult = (name: string, _args: ToolArgs, result: unknown) => {
 const results = await ollamaPipeline
   .create(topic)
   // ============================================================
-  // 1. PLANEJAMENTO DE CONSULTAS
+  // 1. PLANEJAMENTO DE CONSULTAS (numCtx: 16K)
   // ============================================================
   .stage({
     model: "qwen3.5:2b",
+    numCtx: 16384,
     system: `Você é o planejador de um digest de notícias mundiais.
 
 DATA/HORA ATUAL: use a tool "now" se disponível.
@@ -226,7 +233,7 @@ SAÍDA EXCLUSIVA
   "queries": ["...", "..."]
 }`,
     tools: pick("now"),
-    toolHandlers: safeHandlers,
+    toolHandlers: ALL_HANDLERS,
     maxIterations: 3,
     onThinking: gray,
     onContent: (chunk) => writeChunk(chunk),
@@ -234,17 +241,18 @@ SAÍDA EXCLUSIVA
     onToolResult,
   })
   // ============================================================
-  // 2. RECUPERAÇÃO DE MANCHETES
+  // 2. RECUPERAÇÃO DE MANCHETES — Exa MCP (numCtx: 16K)
   // ============================================================
   .then({
     model: "qwen3.5:2b",
+    numCtx: 16384,
     system: `Você é o agente de recuperação de notícias.
 
 OBJETIVO
 Executar as consultas recebidas e coletar um conjunto diversificado de manchetes promissoras.
 
 PROCEDIMENTO
-1. Faça web_search para cada query útil.
+1. Use a ferramenta de busca para cada query útil.
 2. Analise título + snippet + URL.
 3. Descarte links irrelevantes, clickbait óbvio ou muito antigos.
 4. Priorize fontes reconhecidas (BBC, Reuters, AP, Guardian, Folha, G1, CNN, NYT, etc.).
@@ -267,8 +275,8 @@ SAÍDA EXCLUSIVA
 }`,
     transform: (prev) =>
       `CONSULTAS PLANEJADAS:\n${prev.content}\n\nExecute as buscas agora.`,
-    tools: pick("web_search"),
-    toolHandlers: safeHandlers,
+    tools: pick("exa_search"),
+    toolHandlers: ALL_HANDLERS,
     maxIterations: 14,
     onThinking: gray,
     onContent: (chunk) => writeChunk(chunk),
@@ -276,10 +284,11 @@ SAÍDA EXCLUSIVA
     onToolResult,
   })
   // ============================================================
-  // 3. CURADORIA E RANKING
+  // 3. CURADORIA E RANKING (numCtx: 16K)
   // ============================================================
   .then({
     model: "qwen3.5:2b",
+    numCtx: 16384,
     system: `Você é o editor-chefe de um digest diário de notícias.
 
 OBJETIVO
@@ -312,7 +321,7 @@ SAÍDA EXCLUSIVA
     transform: (prev) =>
       `MANCHETES RECUPERADAS:\n${prev.content}\n\nCuradorie e classifique.`,
     tools: [],
-    toolHandlers: safeHandlers,
+    toolHandlers: ALL_HANDLERS,
     maxIterations: 3,
     onThinking: gray,
     onContent: (chunk) => writeChunk(chunk),
@@ -320,14 +329,15 @@ SAÍDA EXCLUSIVA
     onToolResult,
   })
   // ============================================================
-  // 4. ENRIQUECIMENTO (web_fetch nas top 5-7)
+  // 4. ENRIQUECIMENTO — Exa MCP (numCtx: 32K)
   // ============================================================
   .then({
     model: "qwen3.5:2b",
+    numCtx: 32768,
     system: `Você enriquece as notícias selecionadas.
 
 PARA CADA URL DAS 5–7 HISTÓRIAS MAIS IMPORTANTES:
-1. Use web_fetch.
+1. Use a ferramenta de fetch de conteúdo para ler a página.
 2. Extraia um resumo factual de 2 a 4 frases.
 3. Identifique data de publicação se disponível.
 4. Extraia 1–2 fatos-chave (números, nomes, locais).
@@ -342,8 +352,8 @@ Retorne a lista enriquecida no mesmo formato, adicionando os campos:
 "summary", "published", "key_facts"`,
     transform: (prev) =>
       `HISTÓRIAS SELECIONADAS:\n${prev.content}\n\nEnriqueça as 5–7 mais importantes.`,
-    tools: pick("web_fetch"),
-    toolHandlers: safeHandlers,
+    tools: pick("exa_fetch"),
+    toolHandlers: ALL_HANDLERS,
     maxIterations: 16,
     onThinking: gray,
     onContent: (chunk) => writeChunk(chunk),
@@ -351,10 +361,11 @@ Retorne a lista enriquecida no mesmo formato, adicionando os campos:
     onToolResult,
   })
   // ============================================================
-  // 5. REDAÇÃO DO DIGEST (estilo glow)
+  // 5. REDAÇÃO DO DIGEST — estilo glow (numCtx: 32K)
   // ============================================================
   .then({
     model: "qwen3.5:2b",
+    numCtx: 32768,
     system: `Você é o redator final de um digest de notícias para terminal.
 
 OBJETIVO
@@ -437,7 +448,7 @@ RETORNE:
       );
     },
     tools: pick("file_write"),
-    toolHandlers: safeHandlers,
+    toolHandlers: ALL_HANDLERS,
     maxIterations: 4,
     onThinking: gray,
     onContent: (chunk) => writeChunk(chunk),
@@ -445,10 +456,11 @@ RETORNE:
     onToolResult,
   })
   // ============================================================
-  // 6. CHECKLIST FINAL
+  // 6. CHECKLIST FINAL (numCtx: 16K)
   // ============================================================
   .then({
     model: "qwen3.5:2b",
+    numCtx: 16384,
     system: `Verifique o arquivo gerado.
 
 1. file_read do digest em: "${OUTPUT_FILE}"
@@ -468,7 +480,7 @@ RETORNE:
     transform: (prev) =>
       `Resultado da redação: ${prev.content}\n\nLeia o arquivo gerado e verifique.`,
     tools: pick("file_read"),
-    toolHandlers: safeHandlers,
+    toolHandlers: ALL_HANDLERS,
     maxIterations: 4,
     onThinking: gray,
     onContent: (chunk) => writeChunk(chunk),
@@ -476,6 +488,12 @@ RETORNE:
     onToolResult,
   })
   .execute();
+
+// ── Cleanup ──────────────────────────────────────────────────────────────────
+
+if (mcp.bridge) {
+  await mcp.bridge.close();
+}
 
 // ── Relatório final ──────────────────────────────────────────────────────────
 
