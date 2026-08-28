@@ -205,7 +205,7 @@ const results = await ollamaPipeline
   // 1. PLANEJAMENTO DE CONSULTAS (numCtx: 16K)
   // ============================================================
   .stage({
-    model: "qwen3.5:2b",
+    model: "gemma4:31b-cloud",
     numCtx: 16384,
     system: `Você é o planejador de um digest de notícias mundiais.
 
@@ -244,7 +244,7 @@ SAÍDA EXCLUSIVA
   // 2. RECUPERAÇÃO DE MANCHETES — Exa MCP (numCtx: 16K)
   // ============================================================
   .then({
-    model: "qwen3.5:2b",
+    model: "nemotron-3-nano:30b-cloud",
     numCtx: 16384,
     system: `Você é o agente de recuperação de notícias.
 
@@ -287,7 +287,7 @@ SAÍDA EXCLUSIVA
   // 3. CURADORIA E RANKING (numCtx: 16K)
   // ============================================================
   .then({
-    model: "qwen3.5:2b",
+    model: "nemotron-3-nano:30b-cloud",
     numCtx: 16384,
     system: `Você é o editor-chefe de um digest diário de notícias.
 
@@ -332,7 +332,7 @@ SAÍDA EXCLUSIVA
   // 4. ENRIQUECIMENTO — Exa MCP (numCtx: 32K)
   // ============================================================
   .then({
-    model: "qwen3.5:2b",
+    model: "gpt-oss:120b-cloud",
     numCtx: 32768,
     system: `Você enriquece as notícias selecionadas.
 
@@ -364,7 +364,7 @@ Retorne a lista enriquecida no mesmo formato, adicionando os campos:
   // 5. REDAÇÃO DO DIGEST — estilo glow (numCtx: 32K)
   // ============================================================
   .then({
-    model: "qwen3.5:2b",
+    model: "gpt-oss:120b-cloud",
     numCtx: 32768,
     system: `Você é o redator final de um digest de notícias para terminal.
 
@@ -459,7 +459,7 @@ RETORNE:
   // 6. CHECKLIST FINAL (numCtx: 16K)
   // ============================================================
   .then({
-    model: "qwen3.5:2b",
+    model: "gemma4:31b-cloud",
     numCtx: 16384,
     system: `Verifique o arquivo gerado.
 
