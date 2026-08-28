@@ -31,8 +31,13 @@ import { MCPBridge } from "../src/mcp/client.ts";
 import { Now } from "../src/tools/Now.ts";
 import { FileRead } from "../src/tools/FileRead.ts";
 import { FileWrite } from "../src/tools/FileWrite.ts";
+import { z } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+const zodFormat = <T extends z.ZodType>(schema: T) =>
+  zodToJsonSchema(schema, { target: "openApi3" }) as Record<string, unknown>;
 
 const str = (v: unknown, fb = ""): string =>
   v === undefined || v === null ? fb : String(v);
@@ -234,6 +239,9 @@ SAÍDA EXCLUSIVA
 }`,
     tools: pick("now"),
     toolHandlers: ALL_HANDLERS,
+    format: zodFormat(z.object({
+      queries: z.array(z.string()),
+    })),
     maxIterations: 3,
     onThinking: gray,
     onContent: (chunk) => writeChunk(chunk),
@@ -275,8 +283,17 @@ SAÍDA EXCLUSIVA
 }`,
     transform: (prev) =>
       `CONSULTAS PLANEJADAS:\n${prev.content}\n\nExecute as buscas agora.`,
-    tools: pick("exa_search"),
+    tools: pick("web_search_exa"),
     toolHandlers: ALL_HANDLERS,
+    format: zodFormat(z.object({
+      headlines: z.array(z.object({
+        title: z.string(),
+        url: z.string(),
+        source: z.string(),
+        snippet: z.string(),
+        category: z.string(),
+      })),
+    })),
     maxIterations: 14,
     onThinking: gray,
     onContent: (chunk) => writeChunk(chunk),
@@ -322,6 +339,15 @@ SAÍDA EXCLUSIVA
       `MANCHETES RECUPERADAS:\n${prev.content}\n\nCuradorie e classifique.`,
     tools: [],
     toolHandlers: ALL_HANDLERS,
+    format: zodFormat(z.object({
+      selected: z.array(z.object({
+        title: z.string(),
+        url: z.string(),
+        source: z.string(),
+        category: z.string(),
+        why: z.string(),
+      })),
+    })),
     maxIterations: 3,
     onThinking: gray,
     onContent: (chunk) => writeChunk(chunk),
@@ -352,8 +378,19 @@ Retorne a lista enriquecida no mesmo formato, adicionando os campos:
 "summary", "published", "key_facts"`,
     transform: (prev) =>
       `HISTÓRIAS SELECIONADAS:\n${prev.content}\n\nEnriqueça as 5–7 mais importantes.`,
-    tools: pick("exa_fetch"),
+    tools: pick("web_fetch_exa"),
     toolHandlers: ALL_HANDLERS,
+    format: zodFormat(z.object({
+      enriched: z.array(z.object({
+        title: z.string(),
+        url: z.string(),
+        source: z.string(),
+        category: z.string(),
+        summary: z.string(),
+        published: z.string().optional(),
+        key_facts: z.array(z.string()).optional(),
+      })),
+    })),
     maxIterations: 16,
     onThinking: gray,
     onContent: (chunk) => writeChunk(chunk),
@@ -481,6 +518,11 @@ RETORNE:
       `Resultado da redação: ${prev.content}\n\nLeia o arquivo gerado e verifique.`,
     tools: pick("file_read"),
     toolHandlers: ALL_HANDLERS,
+    format: zodFormat(z.object({
+      ok: z.boolean(),
+      path: z.string(),
+      stories: z.number(),
+    })),
     maxIterations: 4,
     onThinking: gray,
     onContent: (chunk) => writeChunk(chunk),
