@@ -373,9 +373,20 @@ REGRAS
 - Se a página falhar, mantenha apenas o título + snippet original.
 - Mantenha o tom neutro e informativo.
 
-SAÍDA
-Retorne a lista enriquecida no mesmo formato, adicionando os campos:
-"summary", "published", "key_facts"`,
+SAÍDA EXCLUSIVA — RETORNE APENAS JSON VÁLIDO, NÃO TABELA MARKDOWN:
+{
+  "enriched": [
+    {
+      "title": "...",
+      "url": "...",
+      "source": "...",
+      "category": "...",
+      "summary": "...",
+      "published": "...",
+      "key_facts": ["..."]
+    }
+  ]
+}`,
     transform: (prev) =>
       `HISTÓRIAS SELECIONADAS:\n${prev.content}\n\nEnriqueça as 5–7 mais importantes.`,
     tools: pick("web_fetch_exa"),
@@ -471,15 +482,58 @@ RETORNE:
   "stories": número_de_historias
 }`,
     transform: (prev) => {
-      let enriched = [];
+      let stories: Array<
+        Record<string, unknown>
+      > = [];
+
+      // 1. Try JSON parse (ideal path)
       try {
-        enriched = JSON.parse(prev.content).enriched ||
-          JSON.parse(prev.content);
+        const parsed = JSON.parse(prev.content);
+        stories = parsed.enriched ?? parsed.selected ?? parsed.headlines ??
+          (Array.isArray(parsed) ? parsed : []);
       } catch {
-        enriched = [];
+        // not JSON — try markdown table below
       }
+
+      // 2. Try markdown table parse (fallback when model ignores format)
+      if (stories.length === 0 && prev.content.includes("|")) {
+        const lines = prev.content.split("\n");
+        let headerIdx = -1;
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].includes("Título") || lines[i].includes("Title")) {
+            headerIdx = i;
+            break;
+          }
+        }
+        if (headerIdx >= 0) {
+          const headers = lines[headerIdx]
+            .split("|")
+            .slice(1, -1)
+            .map((h) => h.trim().toLowerCase());
+          for (let i = headerIdx + 2; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line.startsWith("|") || /^|\s*---/.test(line)) continue;
+            const cells = line.split("|").slice(1, -1).map((c) => c.trim());
+            if (cells.length < headers.length) continue;
+            const row: Record<string, string> = {};
+            headers.forEach((h, idx) => {
+              row[h] = cells[idx] ?? "";
+            });
+            stories.push({
+              title: row["título"] ?? row["title"] ?? "",
+              url: row["url"] ?? "",
+              source: row["fonte"] ?? row["source"] ?? "",
+              category: row["categoria"] ?? row["category"] ?? "",
+              summary: row["resumo"] ?? row["summary"] ?? "",
+              published: row["publicado"] ?? row["published"] ?? "",
+              key_facts: row["fatos‑chave"] ?? row["key_facts"] ?? "",
+            });
+          }
+        }
+      }
+
       return (
-        `HISTÓRIAS ENRIQUECIDAS:\n${JSON.stringify(enriched, null, 2)}\n\n` +
+        `HISTÓRIAS ENRIQUECIDAS:\n${JSON.stringify(stories, null, 2)}\n\n` +
         `Redija o digest em Markdown seguindo a estrutura obrigatória.\n` +
         `Salve com file_write em: ${OUTPUT_FILE}`
       );
