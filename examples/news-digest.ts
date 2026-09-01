@@ -15,8 +15,10 @@ Deno.chdir(rootDir);
  *   2. Recuperação de manchetes (web_search_exa via MCP)
  *   3. Curadoria e ranking (8-12 histórias)
  *   4. Enriquecimento (web_fetch_exa via MCP nas top 5-7, batch)
- *   5. Redação do digest (estilo glow)
- *   6. Checklist final (file_read para verificar)
+ *   5. Escolha da notícia + leitura de todas as fontes
+ *   6. Redação da matéria completa (merge das fontes)
+ *   7. Redação do digest (estilo glow, com matéria em destaque)
+ *   8. Checklist final (file_read para verificar)
  *
  * Uso:
  *   ./news-digest.ts                (notas gerais)
@@ -358,7 +360,9 @@ const pick = (...names: string[]) =>
 
 const topic = Deno.args[0]?.trim() || "notícias recentes do mundo";
 
-const OUT_DIR = `${Deno.env.get("HOME") || Deno.env.get("USERPROFILE") || "."}/news`;
+const OUT_DIR = `${
+  Deno.env.get("HOME") || Deno.env.get("USERPROFILE") || "."
+}/news`;
 await Deno.mkdir(OUT_DIR, { recursive: true });
 
 // Debug console.log(OUT_DIR); Deno.exit(0);
@@ -388,6 +392,61 @@ const onToolResult = (name: string, _args: ToolArgs, result: unknown) => {
 };
 
 // ── Pipeline ─────────────────────────────────────────────────────────────────
+
+let enrichedSnapshot: Array<Record<string, unknown>> = [];
+const fetchedSources: Array<{
+  url: string;
+  title: string;
+  content: string;
+}> = [];
+
+const MAX_SOURCE_CHARS = 1600;
+const MAX_SOURCES = 6;
+
+const parseFetchedMarkdown = (
+  text: string,
+): Array<{ url: string; title: string; content: string }> => {
+  const out: Array<{ url: string; title: string; content: string }> = [];
+  const sections = String(text).split(/\n(?=#\s)/);
+  for (const section of sections) {
+    const urlMatch = section.match(/^URL:\s*(https?:\/\/\S+)/im);
+    if (!urlMatch) continue;
+    const url = urlMatch[1];
+    const title = section.match(/^#\s+(.+)$/im)?.[1]?.trim() ?? url;
+    const content = section.replace(/^#\s+.*$/im, "").replace(/^URL:.*$/im, "")
+      .trim();
+    if (content) out.push({ url, title, content });
+  }
+  return out;
+};
+
+const captureFetchResult = (result: unknown): void => {
+  const parsed = parseFetchedMarkdown(typeof result === "string" ? result : "");
+  if (parsed.length === 0) return;
+  const seen = new Set(fetchedSources.map((s) => s.url));
+  for (const src of parsed) {
+    if (seen.has(src.url)) continue;
+    seen.add(src.url);
+    fetchedSources.push({
+      url: src.url,
+      title: src.title,
+      content: src.content.slice(0, MAX_SOURCE_CHARS),
+    });
+  }
+};
+
+const boundedSources = (
+  sources: Array<{ url: string; title: string; content: string }> =
+    fetchedSources,
+): Array<{ url: string; title: string; content: string }> =>
+  sources
+    .filter((s) => s.url && s.content)
+    .slice(0, MAX_SOURCES)
+    .map((s) => ({
+      url: s.url,
+      title: s.title || s.url,
+      content: s.content.slice(0, MAX_SOURCE_CHARS),
+    }));
 
 const results = await ollamaPipeline
   .create(topic)
@@ -617,7 +676,187 @@ SAÍDA EXCLUSIVA — RETORNE APENAS JSON VÁLIDO, NÃO TABELA MARKDOWN:
     onToolResult,
   })
   // ============================================================
-  // 5. REDAÇÃO DO DIGEST — estilo glow (numCtx: 32K)
+  // 5. ESCOLHA DA NOTÍCIA MAIS RELEVANTE + LEITURA DE FONTES (numCtx: 128K)
+  // ============================================================
+  .then({
+    model: "gpt-oss:120b-cloud",
+    numCtx: 131072,
+    system: `Você é o editor executivo de um digest de notícias.
+
+OBJETIVO
+Dentre as notícias enriquecidas recebidas, escolha a ÚNICA notícia mais relevante e impactante para aprofundar. Depois, busque TODO o conteúdo disponível sobre ela.
+
+CRITÉRIOS DE ESCOLHA
+1. Impacto global ou relevância geopolítica (peso maior)
+2. Urgência / quebra de notícia recente
+3. Audiência e interesse público amplo
+4. Profundidade potencial (quantas fontes cobrem o tema)
+5. Novidade / exclusividade
+
+PROCEDIMENTO
+1. Analise todas as notícias enriquecidas e escolha a mais relevante.
+2. Use web_fetch_exa para buscar TODAS as URLs relacionadas à notícia escolhida — inclua a URL principal e quaisquer outras URLs/referências que apareçam no conteúdo retornado.
+3. Chame web_fetch_exa com TODAS as URLs num único array (aceita múltiplas URLs).
+4. Se o primeiro fetch retornar mais URLs relevantes, faça fetch delas também.
+
+REGRAS
+- Escolha APENAS UMA notícia.
+- Não invente URLs — use apenas as que encontrar no conteúdo.
+- Busque no mínimo 3 fontes diferentes sobre o tema.
+- O conteúdo das páginas é capturado automaticamente pelo sistema — NÃO repita o conteúdo das fontes na sua resposta.
+
+SAÍDA EXCLUSIVA — RETORNE APENAS JSON VÁLIDO:
+{
+  "chosen": {
+    "title": "...",
+    "url": "...",
+    "source": "...",
+    "category": "...",
+    "why": "razão da escolha"
+  }
+}`,
+    transform: (prev) => {
+      const enriched = dedupeStories(
+        parseStories(prev.content, "enriched"),
+      );
+      assertStories("Estágio 4 (histórias enriquecidas)", enriched);
+      enrichedSnapshot = enriched;
+      return (
+        `HISTÓRIAS ENRIQUECIDAS (JSON limpo):\n` +
+        `${JSON.stringify(enriched, null, 2)}\n\n` +
+        `Escolha a notícia mais relevante e busque TODAS as fontes disponíveis via web_fetch_exa.`
+      );
+    },
+    tools: pick("web_fetch_exa"),
+    toolHandlers: ALL_HANDLERS,
+    format: zodFormat(z.object({
+      chosen: z.object({
+        title: z.string(),
+        url: z.string(),
+        source: z.string(),
+        category: z.string(),
+        why: z.string(),
+      }),
+    })),
+    numPredict: 4000,
+    maxIterations: 8,
+    onThinking: gray,
+    //onContent: (chunk) => writeChunk(chunk),
+    onToolCall,
+    onToolResult: (name, args, result) => {
+      onToolResult(name, args, result); // mantém o log
+      if (name === "web_fetch_exa") captureFetchResult(result);
+    },
+  })
+  // ============================================================
+  // 6. REDAÇÃO DA MATÉRIA COMPLETA (numCtx: 128K)
+  // ============================================================
+  .then({
+    model: "gpt-oss:120b-cloud",
+    numCtx: 131072,
+    system: `Você é um jornalista redator de matérias aprofundadas.
+
+OBJETIVO
+Unir TODAS as fontes coletadas sobre a notícia escolhida em uma matéria completa, coesa e bem escrita.
+
+ENTRADA
+Você receberá:
+1. A notícia escolhida (título, URL, fonte, categoria)
+2. Múltiplas fontes com o conteúdo de cada uma
+
+PROCEDIMENTO
+1. Leia todas as fontes fornecidas.
+2. Identifique os pontos em comum e as informações complementares.
+3. Redija uma matéria completa que una todas as perspectivas.
+4. Mantenha fatos verificados — não invente informações.
+5. Cite as fontes no corpo do texto quando apropriado.
+
+ESTRUTURA DA MATÉRIA
+- Título chamativo e informativo
+- Lide (1º parágrafo): resumo em 2-3 frases com os pontos mais importantes
+- Desenvolvimento: detalhes, contexto, diferentes perspectivas das fontes
+- Citação de especialistas / fontes quando disponível
+- Conclusão: impacto e próximos passos
+
+REGRAS
+- Tom jornalístico profissional, neutro e informativo.
+- Não invente dados ou citações.
+- Use dados e números das fontes quando disponíveis.
+- Matéria deve ter entre 300 e 600 palavras.
+- Mantenha parágrafos curtos (2-4 frases cada).
+
+SAÍDA EXCLUSIVA — RETORNE APENAS JSON VÁLIDO:
+{
+  "article": {
+    "title": "...",
+    "body": "matéria completa em markdown",
+    "sources": ["url1", "url2", "..."]
+  }
+}`,
+    transform: (prev) => {
+      const parsed = safeParseJSON(prev.content) as
+        | Record<string, unknown>
+        | null;
+      const chosen = parsed?.chosen as Record<string, unknown> | undefined;
+
+      let chosenStory: Record<string, unknown>;
+      let sources = boundedSources();
+      if (chosen) {
+        chosenStory = chosen;
+      } else if (enrichedSnapshot.length > 0) {
+        chosenStory = enrichedSnapshot[0] as Record<string, unknown>;
+        console.warn(
+          "⚠️ Estágio 5 não retornou 'chosen' válido — usando a 1ª história enriquecida.",
+        );
+      } else {
+        throw new Error(
+          "Estágio 5 retornou saída inválida e não há histórias enriquecidas para fallback.",
+        );
+      }
+
+      if (sources.length === 0) {
+        const snippet = String(
+          chosenStory.summary ?? chosenStory.snippet ?? "",
+        );
+        if (snippet) {
+          sources = [{
+            url: String(chosenStory.url ?? ""),
+            title: String(chosenStory.title ?? ""),
+            content: snippet,
+          }];
+        }
+        console.warn(
+          "⚠️ Nenhuma fonte capturada no estágio 5 — matéria baseada apenas no resumo enriquecido.",
+        );
+      }
+
+      return (
+        `NOTÍCIA ESCOLHIDA:\n${JSON.stringify(chosenStory, null, 2)}\n\n` +
+        `FONTES COLETADAS (${sources.length}):\n` +
+        sources.map((s, i) =>
+          `\n--- Fonte ${i + 1}: ${s.title} (${s.url}) ---\n${s.content}`
+        ).join("\n") +
+        `\n\nUna todas as fontes em uma matéria completa.`
+      );
+    },
+    tools: [],
+    toolHandlers: ALL_HANDLERS,
+    format: zodFormat(z.object({
+      article: z.object({
+        title: z.string(),
+        body: z.string(),
+        sources: z.array(z.string()),
+      }),
+    })),
+    numPredict: 12000,
+    maxIterations: 3,
+    onThinking: gray,
+    //onContent: (chunk) => writeChunk(chunk),
+    onToolCall,
+    onToolResult,
+  })
+  // ============================================================
+  // 7. REDAÇÃO DO DIGEST — estilo glow (numCtx: 32K)
   // ============================================================
   .then({
     model: "gpt-oss:120b-cloud",
@@ -625,7 +864,7 @@ SAÍDA EXCLUSIVA — RETORNE APENAS JSON VÁLIDO, NÃO TABELA MARKDOWN:
     system: `Você é o redator final de um digest de notícias para terminal.
 
 OBJETIVO
-Produzir um Markdown limpo, elegante e legível no glow.
+Produzir um Markdown limpo, elegante e legível no glow, com uma matéria em destaque e resumos por categoria.
 
 ESTRUTURA OBRIGATÓRIA
 
@@ -641,6 +880,15 @@ ESTRUTURA OBRIGATÓRIA
 > Atualizado em ${
       now.toLocaleTimeString("pt-BR")
     } · Fonte: buscas web + curadoria automática
+
+---
+
+## Matéria em Destaque
+
+### Título da Matéria
+
+Corpo completo da matéria (já fornecido no input).
+Cite as fontes no final da seção.
 
 ---
 
@@ -679,6 +927,8 @@ REGRAS DE ESTILO
 - Sem emojis excessivos (no máximo 1–2 se fizer sentido).
 - Sem introduções longas ou conclusões filosóficas.
 - Prefira legibilidade no terminal (linhas não muito longas).
+- A seção "Matéria em Destaque" deve conter o artigo completo fornecido, formatado em Markdown.
+- Não resuma a matéria em destaque — inclua-a integralmente.
 
 SALVE O ARQUIVO COM file_write em:
 "${OUTPUT_FILE}"
@@ -690,15 +940,36 @@ RETORNE:
   "stories": número_de_historias
 }`,
     transform: (prev) => {
-      const stories = dedupeStories(
-        parseStories(prev.content, "enriched"),
-      );
+      const stories = dedupeStories(enrichedSnapshot);
       assertStories("Estágio 4 (histórias enriquecidas)", stories);
+
+      let articleTitle = "";
+      let articleBody = "";
+      try {
+        const articleParsed = safeParseJSON(
+          prev.content,
+        ) as Record<string, unknown> | null;
+        const article = articleParsed?.article as
+          | Record<string, unknown>
+          | undefined;
+        if (article) {
+          articleTitle = String(article.title ?? "");
+          articleBody = String(article.body ?? "");
+        }
+      } catch {
+        // se o parse falhar, segue sem matéria
+      }
+
       return (
         `HISTÓRIAS ENRIQUECIDAS (JSON limpo):\n${
           JSON.stringify(stories, null, 2)
         }\n\n` +
+        (articleBody
+          ? `MATÉRIA EM DESTAQUE:\n# ${articleTitle}\n\n${articleBody}\n\n` +
+            `---\n\n`
+          : "") +
         `Redija o digest em Markdown seguindo a estrutura obrigatória.\n` +
+        `Inclua a matéria em destaque na seção "Matéria em Destaque".\n` +
         `Salve com file_write em: ${OUTPUT_FILE}`
       );
     },
@@ -711,7 +982,7 @@ RETORNE:
     onToolResult,
   })
   // ============================================================
-  // 6. CHECKLIST FINAL (numCtx: 16K)
+  // 8. CHECKLIST FINAL (numCtx: 16K)
   // ============================================================
   .then({
     model: "gemma4:31b-cloud",
@@ -766,6 +1037,39 @@ const selected = dedupeStories(parseStories(stageData[2] ?? "", "selected"));
 await saveArtifact("selected.json", selected);
 const enriched = dedupeStories(parseStories(stageData[3] ?? "", "enriched"));
 await saveArtifact("enriched.json", enriched);
+const chosen = (() => {
+  const parsed = safeParseJSON(stageData[4] ?? "") as
+    | Record<string, unknown>
+    | null;
+  const c = parsed?.chosen as Record<string, unknown> | undefined;
+  const sources = boundedSources(
+    fetchedSources.length > 0 ? fetchedSources : results[4]?.toolCalls
+      .filter((tc) => tc.name === "web_fetch_exa")
+      .flatMap((tc) =>
+        parseFetchedMarkdown(
+          typeof tc.result === "string" ? tc.result : "",
+        )
+      ),
+  );
+  return {
+    chosen: c ?? {},
+    sources,
+    count: sources.length,
+  };
+})();
+await saveArtifact("article.json", chosen);
+const fullArticle = (() => {
+  const parsed = safeParseJSON(stageData[5] ?? "") as
+    | Record<string, unknown>
+    | null;
+  const a = parsed?.article as Record<string, unknown> | undefined;
+  return {
+    title: a?.title ?? "",
+    body: a?.body ?? "",
+    sources: Array.isArray(a?.sources) ? a.sources : [],
+  };
+})();
+await saveArtifact("full-article.json", fullArticle);
 
 // ── Relatório final ──────────────────────────────────────────────────────────
 
@@ -792,6 +1096,13 @@ const manifest = {
     headlines: headlines.length,
     selected: selected.length,
     enriched: enriched.length,
+    sources: chosen.count,
+    article_words: String(fullArticle.body).trim().split(/\s+/)
+      .filter(Boolean).length,
+  },
+  featured_article: {
+    title: fullArticle.title,
+    sources: fullArticle.sources.length,
   },
   per_category: perCategory,
   tokens: {
@@ -816,7 +1127,7 @@ console.log(
   `🔧 Chamadas de ferramentas: ${totalToolCalls} · ${totalTokens} tokens`,
 );
 console.log(
-  `ℹ️ queries=${queries.length} manchetes=${headlines.length} selecionadas=${selected.length} enriquecidas=${enriched.length}`,
+  `ℹ️ queries=${queries.length} manchetes=${headlines.length} selecionadas=${enriched.length} fontes-da-matéria=${chosen.count}`,
 );
 console.log(
   `🗂️ Por categoria: ${

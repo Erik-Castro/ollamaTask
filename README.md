@@ -22,6 +22,8 @@ calling**, **structured outputs**, and **WebStreams** — all built on the
 - **Tool suite** — `src/tools/` ships ready-to-use, zero-dependency tools
   (search, web, filesystem, calculator, state, command execution) built for
   tool-calling pipelines
+- **MCP integration** — bridge external MCP servers (local stdio or remote HTTP)
+  into `ollamaTask` tools, or expose the `src/tools/` suite as an MCP server
 - **RAG & Semantic Memory** — built-in via `src/memories/`: encrypted SQLite
   (SQLCipher), vector KNN search (sqlite-vector), semantic chunking, and
   multi-provider support (Ollama + OpenAI-compatible)
@@ -38,6 +40,13 @@ calling**, **structured outputs**, and **WebStreams** — all built on the
 # Copy src/ollamaTask.ts into your project
 # Add the ollama dependency
 deno add npm:ollama@^0.6.3
+```
+
+For MCP support, also add the Model Context Protocol SDK (and `zod`, used by
+`src/mcp/`):
+
+```bash
+deno add npm:@modelcontextprotocol/sdk npm:zod
 ```
 
 ## Quick Start
@@ -70,25 +79,29 @@ new ollamaTask(model: string)
 
 All builder methods return `this` for chaining.
 
-| Method             | Signature                                    | Description                                     |
-| ------------------ | -------------------------------------------- | ----------------------------------------------- |
-| `.system()`        | `(content: string) => this`                  | Add a system message                            |
-| `.user()`          | `(content: string, opts?) => this`           | Add a user message (optional `images`)          |
-| `.tools()`         | `(defs: ToolDefinition[]) => this`           | Register tool schemas for the model             |
-| `.toolHandlers()`  | `(handlers: ToolHandler[]) => this`          | Register tool executor functions                |
-| `.format()`        | `(schema: string \| object) => this`         | Set response format (`"json"` or JSON schema)   |
-| `.maxIterations()` | `(n: number) => this`                        | Cap tool-calling pipeline loops (default: `10`) |
-| `.numCtx()`        | `(n: number) => this`                        | Set context window size (Ollama `num_ctx`)      |
-| `.temperature()`   | `(t: number) => this`                        | Set sampling temperature (0.0–2.0)              |
-| `.keepAlive()`     | `(duration: string \| number) => this`       | How long to keep model loaded (`"5m"`, `300`)   |
-| `.stop()`          | `(sequences: string[]) => this`              | Stop sequences to halt generation               |
-| `.numPredict()`    | `(n: number) => this`                        | Max tokens to generate                          |
-| `.seed()`          | `(n: number) => this`                        | Random seed for reproducibility                 |
-| `.options()`       | `(opts: Record<string, unknown>) => this`    | Pass any Ollama runtime option                  |
-| `.onThinking()`    | `(cb: (chunk: string) => void) => this`      | Callback for thinking/reasoning tokens          |
-| `.onContent()`     | `(cb: (chunk: string) => void) => this`      | Callback for response content tokens            |
-| `.onToolCall()`    | `(cb: (name, args) => void) => this`         | Callback when model requests a tool             |
-| `.onToolResult()`  | `(cb: (name, args, result) => void) => this` | Callback after a tool handler returns           |
+| Method             | Signature                                              | Description                                       |
+| ------------------ | ------------------------------------------------------ | ------------------------------------------------- |
+| `.system()`        | `(content: string) => this`                            | Add a system message                              |
+| `.user()`          | `(content: string, opts?) => this`                     | Add a user message (optional `images`)            |
+| `.tools()`         | `(defs: ToolDefinition[]) => this`                     | Register tool schemas for the model               |
+| `.toolHandlers()`  | `(handlers: ToolHandler[]) => this`                    | Register tool executor functions                  |
+| `.format()`        | `(schema: string \| object) => this`                   | Set response format (`"json"` or JSON schema)     |
+| `.maxIterations()` | `(n: number) => this`                                  | Cap tool-calling pipeline loops (default: `10`)   |
+| `.numCtx()`        | `(n: number) => this`                                  | Set context window size (Ollama `num_ctx`)        |
+| `.temperature()`   | `(t: number) => this`                                  | Set sampling temperature (0.0–2.0)                |
+| `.keepAlive()`     | `(duration: string \| number) => this`                 | How long to keep model loaded (`"5m"`, `300`)     |
+| `.stop()`          | `(sequences: string[]) => this`                        | Stop sequences to halt generation                 |
+| `.numPredict()`    | `(n: number) => this`                                  | Max tokens to generate                            |
+| `.seed()`          | `(n: number) => this`                                  | Random seed for reproducibility                   |
+| `.options()`       | `(opts: Record<string, unknown>) => this`              | Pass any Ollama runtime option                    |
+| `.reasoning()`     | `(level: "low" \| "medium" \| "high" \| true) => this` | Enable thinking/reasoning tokens                  |
+| `.rag()`           | `(config: RAGConfig) => this`                          | Inject RAG context automatically (see below)      |
+| `.useMCP()`        | `(config: MCPServerConfig) => Promise<this>`           | Bridge an MCP server (stdio or remote) into tools |
+| `.useMCPServers()` | `(configs: MCPServerConfig[]) => Promise<this>`        | Bridge multiple MCP servers                       |
+| `.onThinking()`    | `(cb: (chunk: string) => void) => this`                | Callback for thinking/reasoning tokens            |
+| `.onContent()`     | `(cb: (chunk: string) => void) => this`                | Callback for response content tokens              |
+| `.onToolCall()`    | `(cb: (name, args) => void) => this`                   | Callback when model requests a tool               |
+| `.onToolResult()`  | `(cb: (name, args, result) => void) => this`           | Callback after a tool handler returns             |
 
 ### Execution
 
@@ -453,6 +466,108 @@ type StreamEvent =
   | { type: "done"; data: { inputTokens: number; outputTokens: number } };
 ```
 
+## MCP Integration
+
+`src/mcp/` bridges [Model Context Protocol](https://modelcontextprotocol.io)
+servers into the tool-calling loop. It ships both a **client** (`MCPBridge`) and
+a **server** that exposes the `src/tools/` suite over MCP.
+
+The SDK is pulled via `@modelcontextprotocol/sdk`; see the `Setup` section.
+
+### Server configurations
+
+```ts
+import type { MCPServerConfig } from "./src/mcp/index.ts";
+
+// Local MCP server launched as a child process via stdio
+const stdio: MCPServerConfig = {
+  command: "deno",
+  args: ["run", "--allow-net", "--allow-read", "src/mcp/server.ts"],
+  env: { SOME_VAR: "value" }, // optional
+};
+
+// Remote MCP server over HTTP (Streamable HTTP or SSE)
+const remote: MCPServerConfig = {
+  type: "remote",
+  url: "https://mcp.example.com/mcp",
+  headers: { Authorization: "Bearer ..." }, // optional
+};
+```
+
+### Client: bridge an MCP server into `ollamaTask`
+
+`.useMCP()` / `.useMCPServers()` auto-convert the MCP server's tools into
+`ToolDefinition`/`ToolHandler` pairs and register them on the task:
+
+```ts
+import { ollamaTask } from "./src/ollamaTask.ts";
+
+const result = await new ollamaTask("qwen3.5:2b")
+  .system("Use tools when needed. Be concise.")
+  .user("List files in the current directory and check the time.")
+  .useMCP({
+    command: "deno",
+    args: [
+      "run",
+      "--allow-net",
+      "--allow-read",
+      "--allow-write",
+      "--allow-env",
+      "--allow-run",
+      "src/mcp/server.ts",
+    ],
+  })
+  .onToolCall((name, args) =>
+    console.log(`🔧 ${name}(${JSON.stringify(args)})`)
+  )
+  .execute();
+```
+
+For full control (e.g. selecting which tools to expose), connect a bridge
+directly and wire the definitions yourself:
+
+```ts
+import { MCPBridge } from "./src/mcp/index.ts";
+import { ollamaTask } from "./src/ollamaTask.ts";
+
+const bridge = await MCPBridge.connect({ type: "remote", url: EXA_URL });
+const { definitions, handlers } = bridge.getTools();
+
+const result = await new ollamaTask("qwen3.5:2b")
+  .user("Find recent news about Deno 2.x in 2026.")
+  .tools(definitions)
+  .toolHandlers(handlers)
+  .execute();
+
+await bridge.close();
+```
+
+`MCPBridge` API: `connect(config): Promise<MCPBridge>`, `getTools()`
+(`{ definitions, handlers }`), `getToolDefinitions()`, `getToolHandlers()`, and
+`close()`.
+
+### Server: expose the tool suite over MCP
+
+`buildServer()` returns an MCP `Server` with the whole `src/tools/` suite
+(`now`, `calculate`, `list_dir`, `file_read`, `file_write`, `code_search`,
+`which`, `run_command`, `web_search`, `web_fetch`, `state_*`). `startServer()`
+launches it over stdio:
+
+```ts
+import { startServer } from "./src/mcp/index.ts";
+
+await startServer(); // stdio transport
+```
+
+```bash
+# The client launches this server as a child process (see example above)
+deno run --allow-net --allow-read --allow-write --allow-env --allow-run \
+  src/mcp/server.ts
+```
+
+Both `MCPBridge` (client) and `buildServer`/`startServer` (server) are
+re-exported from `src/mcp/index.ts` alongside the config types.
+
 ## Pipeline
 
 Chain multiple models in sequence with `ollamaPipeline`. Each stage runs an
@@ -461,7 +576,8 @@ of one stage feeds into the next via `transform`.
 
 > **Note:** `transform` receives `(prev, original)` — the previous stage's
 > `ExecutionResult` and the original prompt from `.create()`, so later stages
-> always have access to the user's original request.
+> always have access to the user's original request. It may also be `async`
+> (e.g. to read files or query a RAG store before composing the prompt).
 
 ```ts
 import { ollamaPipeline } from "./src/ollamaPipeline.ts";
@@ -502,30 +618,60 @@ const final = await ollamaPipeline
   .run(); // → ExecutionResult (last stage only)
 ```
 
+Attach MCP servers to a stage with `mcpServers` — their tools are merged into
+the stage's `ollamaTask` automatically:
+
+```ts
+const MCP_SERVER = {
+  command: "deno",
+  args: [
+    "run",
+    "--allow-net",
+    "--allow-read",
+    "--allow-write",
+    "--allow-env",
+    "--allow-run",
+    "src/mcp/server.ts",
+  ],
+};
+
+const results = await ollamaPipeline
+  .create("Explore o diretório e resuma")
+  .stage({
+    model: "qwen3.5:2b",
+    system: "Use list_dir e now para investigar e reportar.",
+    mcpServers: [MCP_SERVER],
+  })
+  .then({ model: "qwen3.5:2b", system: "Resuma o relatório." })
+  .execute();
+```
+
 ### StageConfig
 
-| Property        | Type                           | Description                                  |
-| --------------- | ------------------------------ | -------------------------------------------- |
-| `model`         | `string`                       | Ollama model name (required)                 |
-| `system`        | `string`                       | System prompt for this stage                 |
-| `user`          | `string`                       | Override user message (default: prev result) |
-| `images`        | `(Uint8Array \| string)[]`     | Images for vision models                     |
-| `transform`     | `(prev, original) => string`   | Transform previous result into next prompt   |
-| `tools`         | `ToolDefinition[]`             | Tool schemas for this stage                  |
-| `toolHandlers`  | `ToolHandler[]`                | Tool executor functions                      |
-| `format`        | `string \| object`             | Response format (`"json"` or JSON schema)    |
-| `maxIterations` | `number`                       | Cap tool-calling loops (default: `10`)       |
-| `numCtx`        | `number`                       | Context window size (Ollama `num_ctx`)       |
-| `temperature`   | `number`                       | Sampling temperature (0.0–2.0)               |
-| `keepAlive`     | `string \| number`             | How long to keep model loaded                |
-| `stop`          | `string[]`                     | Stop sequences to halt generation            |
-| `numPredict`    | `number`                       | Max tokens to generate                       |
-| `seed`          | `number`                       | Random seed for reproducibility              |
-| `options`       | `Record<string, unknown>`      | Any Ollama runtime option                    |
-| `onThinking`    | `(chunk: string) => void`      | Thinking token callback                      |
-| `onContent`     | `(chunk: string) => void`      | Content token callback                       |
-| `onToolCall`    | `(name, args) => void`         | Tool call callback                           |
-| `onToolResult`  | `(name, args, result) => void` | Tool result callback                         |
+| Property        | Type                                            | Description                                                 |
+| --------------- | ----------------------------------------------- | ----------------------------------------------------------- |
+| `model`         | `string`                                        | Ollama model name (required)                                |
+| `system`        | `string`                                        | System prompt for this stage                                |
+| `user`          | `string`                                        | Override user message (default: prev result)                |
+| `images`        | `(Uint8Array \| string)[]`                      | Images for vision models                                    |
+| `transform`     | `(prev, original) => string \| Promise<string>` | Transform previous result into next prompt                  |
+| `tools`         | `ToolDefinition[]`                              | Tool schemas for this stage                                 |
+| `toolHandlers`  | `ToolHandler[]`                                 | Tool executor functions                                     |
+| `mcpServers`    | `MCPServerConfig[]`                             | MCP servers to bridge into this stage (tools auto-injected) |
+| `format`        | `string \| object`                              | Response format (`"json"` or JSON schema)                   |
+| `maxIterations` | `number`                                        | Cap tool-calling loops (default: `10`)                      |
+| `numCtx`        | `number`                                        | Context window size (Ollama `num_ctx`)                      |
+| `temperature`   | `number`                                        | Sampling temperature (0.0–2.0)                              |
+| `keepAlive`     | `string \| number`                              | How long to keep model loaded                               |
+| `stop`          | `string[]`                                      | Stop sequences to halt generation                           |
+| `numPredict`    | `number`                                        | Max tokens to generate                                      |
+| `seed`          | `number`                                        | Random seed for reproducibility                             |
+| `options`       | `Record<string, unknown>`                       | Any Ollama runtime option                                   |
+| `think`         | `"low" \| "medium" \| "high" \| true`           | Thinking/reasoning level for this stage                     |
+| `onThinking`    | `(chunk: string) => void`                       | Thinking token callback                                     |
+| `onContent`     | `(chunk: string) => void`                       | Content token callback                                      |
+| `onToolCall`    | `(name, args) => void`                          | Tool call callback                                          |
+| `onToolResult`  | `(name, args, result) => void`                  | Tool result callback                                        |
 
 ## Tools (`src/tools/`)
 
@@ -631,21 +777,27 @@ Run any example with:
 deno run --allow-net=127.0.0.1:11434 examples/<file>.ts
 ```
 
-| File                            | Feature                                                             |
-| ------------------------------- | ------------------------------------------------------------------- |
-| `examples/basic-chat.ts`        | Basic chat with thinking model                                      |
-| `examples/tool-calling.ts`      | Tool calling with callbacks                                         |
-| `examples/web-stream.ts`        | WebStreams API                                                      |
-| `examples/structured-output.ts` | Structured outputs with JSON schema                                 |
-| `examples/pipeline-usage.ts`    | Multi-model pipeline                                                |
-| `examples/websearch-tool.ts`    | `web_search` wired into `ollamaTask`                                |
-| `examples/pipeline-tools.ts`    | 4-stage pipeline using the full tool suite                          |
-| `examples/example.ts`           | Contract-generation pipeline using all tools with `FileRead` offset |
-| `examples/semantic-memory.ts`   | Semantic routing + RAG via memories                                 |
-| `examples/embedding-store.ts`   | Vector store demo via memories                                      |
-| `examples/rag-task.ts`          | Passive RAG with `.rag()` builder                                   |
-| `examples/rag-tool.ts`          | Agentic RAG with `RAGSearchTool` tool                               |
-| `examples/rag-pipeline.ts`      | RAG with `.ragStage()` pipeline stage                               |
+| File                                 | Feature                                                             |
+| ------------------------------------ | ------------------------------------------------------------------- |
+| `examples/basic-chat.ts`             | Basic chat with thinking model                                      |
+| `examples/tool-calling.ts`           | Tool calling with callbacks                                         |
+| `examples/web-stream.ts`             | WebStreams API                                                      |
+| `examples/structured-output.ts`      | Structured outputs with JSON schema                                 |
+| `examples/pipeline-usage.ts`         | Multi-model pipeline                                                |
+| `examples/websearch-tool.ts`         | `web_search` wired into `ollamaTask`                                |
+| `examples/pipeline-tools.ts`         | 4-stage pipeline using the full tool suite                          |
+| `examples/example.ts`                | Contract-generation pipeline using all tools with `FileRead` offset |
+| `examples/mcp-tools.ts`              | `ollamaTask` + local MCP server (stdio) via `.useMCP()`             |
+| `examples/mcp-remote.ts`             | Remote MCP client (Exa) with `MCPBridge.connect()`                  |
+| `examples/mcp-pipeline.ts`           | `ollamaPipeline` with `mcpServers` per stage                        |
+| `examples/mcp-server.ts`             | Standalone MCP server exposing `src/tools/` over stdio              |
+| `examples/news-digest.ts`            | 8-stage news pipeline (Exa remote MCP) with a featured article      |
+| `examples/deep-research-academic.ts` | 7-stage academic deep-research pipeline with adaptive retrieval     |
+| `examples/semantic-memory.ts`        | Semantic routing + RAG via memories                                 |
+| `examples/embedding-store.ts`        | Vector store demo via memories                                      |
+| `examples/rag-task.ts`               | Passive RAG with `.rag()` builder                                   |
+| `examples/rag-tool.ts`               | Agentic RAG with `RAGSearchTool` tool                               |
+| `examples/rag-pipeline.ts`           | RAG with `.ragStage()` pipeline stage                               |
 
 The `examples/pipeline-tools.ts` example needs permission flags beyond the
 Ollama host because it touches network, filesystem, environment and a partial
@@ -654,6 +806,25 @@ Ollama host because it touches network, filesystem, environment and a partial
 ```bash
 deno run --allow-net --allow-env --allow-read --allow-write --allow-run \
   examples/pipeline-tools.ts
+```
+
+The `examples/mcp-tools.ts`, `examples/mcp-pipeline.ts` and
+`examples/mcp-server.ts` examples launch a local MCP server via stdio, so they
+need the same broad flags plus `--allow-run` (to spawn the server):
+
+```bash
+deno run --allow-net --allow-env --allow-read --allow-write --allow-run \
+  examples/mcp-tools.ts
+```
+
+`examples/mcp-remote.ts` only needs broad `--allow-net` because it reaches the
+remote Exa MCP server over HTTP. `examples/news-digest.ts` and
+`examples/deep-research-academic.ts` do the same, but also write artifacts and
+digest files, so they need read/write too:
+
+```bash
+deno run --allow-net --allow-read --allow-write --allow-env \
+  examples/news-digest.ts
 ```
 
 The RAG examples (`rag-task.ts`, `rag-tool.ts`, `rag-pipeline.ts`) need
