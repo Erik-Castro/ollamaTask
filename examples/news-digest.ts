@@ -1,4 +1,4 @@
-#!/bin/env -S deno run -WRNE
+#!/data/data/com.termux/files/usr/bin/env -S deno run -WRNE
 
 const rootDir = new URL(".", import.meta.url).pathname;
 Deno.chdir(rootDir);
@@ -260,17 +260,17 @@ const LOCAL_TOOLS: ToolDefinition[] = [
   ),
   tool(
     "file_read",
-    "Lê um arquivo de texto existente.",
+    "Lê arquivo de texto por janela de linhas (offset 1-based + limit).",
     {
       path: { type: "string" },
-      maxChars: { type: "integer" },
       offset: { type: "integer" },
+      limit: { type: "integer" },
     },
     ["path"],
   ),
   tool(
     "file_write",
-    "Escreve conteúdo em arquivo local.",
+    "Escreve conteúdo em arquivo local (atômico; exige leitura prévia do path).",
     {
       path: { type: "string" },
       content: { type: "string" },
@@ -285,8 +285,8 @@ const LOCAL_HANDLERS: ToolHandler[] = [
     name: "file_read",
     execute: (a) =>
       FileRead(str(a.path), {
-        maxChars: num(a.maxChars) ?? 2000,
-        offset: num(a.offset) ?? 0,
+        offset: num(a.offset, 1),
+        limit: num(a.limit, 2000),
       }),
   },
   {

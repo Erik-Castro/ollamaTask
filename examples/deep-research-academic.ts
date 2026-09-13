@@ -63,17 +63,17 @@ const tool = (
 const ALL_TOOLS: ToolDefinition[] = [
   tool(
     "file_read",
-    "Lê um arquivo de texto existente.",
+    "Lê arquivo de texto por janela de linhas (offset 1-based + limit).",
     {
       path: { type: "string" },
-      maxChars: { type: "integer" },
       offset: { type: "integer" },
+      limit: { type: "integer" },
     },
     ["path"],
   ),
   tool(
     "file_write",
-    "Cria ou sobrescreve um arquivo de texto.",
+    "Cria ou sobrescreve um arquivo de texto (atômico; exige leitura prévia do path).",
     {
       path: { type: "string" },
       content: { type: "string" },
@@ -87,8 +87,8 @@ const handlers: ToolHandler[] = [
     name: "file_read",
     execute: (a) =>
       FileRead(str(a.path), {
-        maxChars: num(a.maxChars) ?? 2000,
-        offset: num(a.offset) ?? 0,
+        offset: num(a.offset, 1),
+        limit: num(a.limit, 2000),
       }),
   },
   {

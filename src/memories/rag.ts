@@ -1,5 +1,5 @@
 import { type CipherDatabase, openDatabase } from "./database.ts";
-import { type ChatMessage, type LLMProvider } from "./providers/types.ts";
+import type { ChatMessage, LLMProvider } from "./providers/types.ts";
 import { OllamaProvider } from "./providers/ollama.ts";
 import { OpenAIProvider } from "./providers/openai.ts";
 import { type ChunkerOptions, chunkText } from "./chunker.ts";

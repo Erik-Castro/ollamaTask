@@ -6,6 +6,8 @@ import { Calculator } from "../tools/Calculator.ts";
 import { ListDir } from "../tools/ListDir.ts";
 import { FileRead } from "../tools/FileRead.ts";
 import { FileWrite } from "../tools/FileWrite.ts";
+import { FileEdit } from "../tools/FileEdit.ts";
+import { FsError, resetFileObservation } from "../tools/file-core.ts";
 import { CodeSearch } from "../tools/CodeSearch.ts";
 import { Which } from "../tools/Which.ts";
 import { RunCommand } from "../tools/RunCommand.ts";
@@ -158,20 +160,22 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: "file_read",
-    description: "Read a text file from a byte offset.",
+    description:
+      "Read a text file as a line window (1-based offset, 1 line per result; caps: 2000 lines, 2000 chars per line, 50 KiB per window). Read a file before writing/editing it.",
     inputSchema: {
       type: "object",
       properties: {
         path: { type: "string", description: "File path" },
-        maxChars: { type: "integer", description: "Max characters" },
-        offset: { type: "integer", description: "Byte offset" },
+        offset: { type: "integer", description: "Starting line (1-based)" },
+        limit: { type: "integer", description: "Max lines to read" },
       },
       required: ["path"],
     },
   },
   {
     name: "file_write",
-    description: "Create or overwrite a text file.",
+    description:
+      "Create or overwrite a text file atomically (temp + rename). Requires a prior file_read of the same path (read-before-write).",
     inputSchema: {
       type: "object",
       properties: {
@@ -179,6 +183,24 @@ const TOOLS: ToolDef[] = [
         content: { type: "string", description: "File content" },
       },
       required: ["path", "content"],
+    },
+  },
+  {
+    name: "file_edit",
+    description:
+      "Replace a literal old_string with new_string in a text file (unique match required; use replace_all for multiple). Requires a prior file_read of the same path.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "File path" },
+        old_string: { type: "string", description: "Exact text to replace" },
+        new_string: { type: "string", description: "Replacement text" },
+        replace_all: {
+          type: "boolean",
+          description: "Replace every occurrence",
+        },
+      },
+      required: ["path", "old_string", "new_string"],
     },
   },
   {
@@ -260,6 +282,23 @@ async function handleToolCall(
   name: string,
   args: ToolArgs,
 ): Promise<{ type: string; text: string }[]> {
+  try {
+    return await handleToolCallInner(name, args);
+  } catch (error) {
+    if (error instanceof FsError) {
+      return [{
+        type: "text",
+        text: JSON.stringify({ error: error.code, message: error.message }),
+      }];
+    }
+    throw error;
+  }
+}
+
+async function handleToolCallInner(
+  name: string,
+  args: ToolArgs,
+): Promise<{ type: string; text: string }[]> {
   const stateHandler = stateHandlerMap.get(name);
   if (stateHandler) {
     const result = await stateHandler.execute(args);
@@ -280,12 +319,20 @@ async function handleToolCall(
       break;
     case "file_read":
       result = await FileRead(str(args.path), {
-        maxChars: args.maxChars != null ? Number(args.maxChars) : undefined,
         offset: args.offset != null ? Number(args.offset) : undefined,
+        limit: args.limit != null ? Number(args.limit) : undefined,
       });
       break;
     case "file_write":
       result = await FileWrite(str(args.path), str(args.content));
+      break;
+    case "file_edit":
+      result = await FileEdit(
+        str(args.path),
+        str(args.old_string),
+        str(args.new_string),
+        { replaceAll: args.replace_all === true },
+      );
       break;
     case "code_search":
       result = await CodeSearch(str(args.pattern), {
@@ -318,6 +365,7 @@ async function handleToolCall(
 }
 
 export function buildServer(): Server {
+  resetFileObservation();
   const server = new Server(
     { name: "ollama-task-tools", version: "1.0.0" },
     { capabilities: { tools: {} } },

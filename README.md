@@ -622,9 +622,9 @@ await bridge.close();
 ### Server: expose the tool suite over MCP
 
 `buildServer()` returns an MCP `Server` with the whole `src/tools/` suite
-(`now`, `calculate`, `list_dir`, `file_read`, `file_write`, `code_search`,
-`which`, `run_command`, `web_search`, `web_fetch`, `state_*`). `startServer()`
-launches it over stdio:
+(`now`, `calculate`, `list_dir`, `file_read`, `file_write`, `file_edit`,
+`code_search`, `which`, `run_command`, `web_search`, `web_fetch`, `state_*`).
+`startServer()` launches it over stdio:
 
 ```ts
 import { startServer } from "./src/mcp/index.ts";
@@ -755,21 +755,70 @@ structured results. They also power `examples/pipeline-tools.ts`.
 All functions take plain options and return serializable objects, so they map
 cleanly onto `ToolDefinition`/`ToolHandler` pairs.
 
-| Module          | Function / family                      | Description                                                             |
-| --------------- | -------------------------------------- | ----------------------------------------------------------------------- |
-| `Now.ts`        | `Now()`                                | Current timestamp: ISO, unix, timezone, UTC offset                      |
-| `Calculator.ts` | `Calculator(expr)`                     | Evaluates arithmetic via a safe custom parser (no `eval`/`Function`)    |
-| `ListDir.ts`    | `ListDir(path = ".")`                  | Lists entries `{ name, kind }`, dirs first, sorted                      |
-| `FileRead.ts`   | `FileRead(path, { maxChars, offset })` | Reads a text file from a byte `offset` (`Deno.seek`), truncated         |
-| `FileWrite.ts`  | `FileWrite(path, content)`             | Writes a text file, returns bytes written                               |
-| `CodeSearch.ts` | `CodeSearch(pattern, opts)`            | Regex search across files; auto backend `rg` → Deno fallback            |
-| `Which.ts`      | `Which(binary)`                        | Checks if a binary exists on `PATH` (no subprocess)                     |
-| `RunCommand.ts` | `RunCommand(cmd, args, { timeoutMs })` | Runs a whitelisted command with timeout and output truncation           |
-| `WebSearch.ts`  | `WebSearch(query)`                     | DuckDuckGo search, parses results and optional instant-answer           |
-| `WebFetch.ts`   | `WebFetch(url, { maxChars })`          | Fetches a page and extracts title + clean text                          |
-| `StateStore.ts` | `get/set/delete/list`                  | Persistent JSON K-V store (default `data/state.json`)                   |
-| `html.ts`       | helpers                                | `stripTags`, `unescapeHtml`, `cleanText`, `extractText`, `extractTitle` |
-| `net.ts`        | helpers                                | `BROWSER_HEADERS` + `fetchPage(url)`                                    |
+| Module          | Function / family                                                    | Description                                                                                                     |
+| --------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `Now.ts`        | `Now()`                                                              | Current timestamp: ISO, unix, timezone, UTC offset                                                              |
+| `Calculator.ts` | `Calculator(expr)`                                                   | Evaluates arithmetic via a safe custom parser (no `eval`/`Function`)                                            |
+| `ListDir.ts`    | `ListDir(path = ".")`                                                | Lists entries `{ name, kind }`, dirs first, sorted                                                              |
+| `FileRead.ts`   | `FileRead(path, { offset, limit })`                                  | Reads a text file as a line window (1-based, capped) + `renderReadOutput()` envelope                            |
+| `FileWrite.ts`  | `FileWrite(path, content)` / `FileWriteUnconditional`                | Atomic write (temp + rename) with read-before-write guard; returns `{ operation, before, after, bytesWritten }` |
+| `FileEdit.ts`   | `FileEdit(path, old, new, { replaceAll })` / `FileEditUnconditional` | Literal edit (unique match required). CRLF-aware; read-before-write guard                                       |
+| `CodeSearch.ts` | `CodeSearch(pattern, opts)`                                          | Regex search across files; auto backend `rg` → Deno fallback                                                    |
+| `Which.ts`      | `Which(binary)`                                                      | Checks if a binary exists on `PATH` (no subprocess)                                                             |
+| `RunCommand.ts` | `RunCommand(cmd, args, { timeoutMs })`                               | Runs a whitelisted command with timeout and output truncation                                                   |
+| `WebSearch.ts`  | `WebSearch(query)`                                                   | DuckDuckGo search, parses results and optional instant-answer                                                   |
+| `WebFetch.ts`   | `WebFetch(url, { maxChars })`                                        | Fetches a page and extracts title + clean text                                                                  |
+| `StateStore.ts` | `get/set/delete/list`                                                | Persistent JSON K-V store (default `data/state.json`)                                                           |
+| `html.ts`       | helpers                                                              | `stripTags`, `unescapeHtml`, `cleanText`, `extractText`, `extractTitle`                                         |
+| `net.ts`        | helpers                                                              | `BROWSER_HEADERS` + `fetchPage(url)`                                                                            |
+
+### File tools (read-before-write & atomic edits)
+
+`file_read`/`file_write`/`file_edit` mirror the deepseek-harness file tools:
+
+- `FileRead` streams a line window with caps
+  `{ offset = 1, limit = 2000,
+  maxLineLength = 2000, maxBytes = 50 KiB }`
+  (1-based `offset`). Returns
+  `{ path, offset, lines: [{ number, text }], totalLines, truncated }`;
+  `renderReadOutput()` renders the model-facing
+  `<path>/<type>file</type>/<content>` envelope with a
+  `(Showing lines X-Y of
+  ~Z. Use offset=N to continue.)` footer.
+- `FileWrite` writes atomically: staged temp file (private
+  `.name.pid.uuid.tmpdir`)
+  - `rename`, preserving the existing file mode. Returns
+    `{ path, operation: "create" | "update", before, after, bytesWritten }` with
+    LF-normalized `before`/`after` (the diff base; `before` is `null` above the
+    10 MiB cap).
+- `FileEdit` replaces a literal `old_string` with `new_string`. A unique match
+  is required unless `replace_all`; CRLF is normalized for matching and restored
+  on write-back.
+
+**Read-before-write policy** (always on for `FileWrite`/`FileEdit`): a
+successful `FileRead` records the file version (`dev:ino:size:mtime:ctime`).
+Mutating a path that was never read (existing file) throws `FS_NOT_OBSERVED`;
+the file changed since it was last read throws `FS_STALE_VERSION`. Successful
+mutations re-record the new version, so `read → write → write` chains work.
+Error codes (`FsError`, exported from `src/tools/file-core.ts`): `FS_NOT_FOUND`,
+`FS_NOT_REGULAR_FILE`, `FS_NOT_TEXT`, `FS_NOT_OBSERVED`, `FS_STALE_VERSION`,
+`FS_EDIT_NOT_FOUND`, `FS_AMBIGUOUS_EDIT`, `FS_EDIT_EQUAL`.
+
+Skip the guard with `FileWriteUnconditional` / `FileEditUnconditional` (same
+atomicity, no policy) and clear the in-memory observation map with
+`resetFileObservation()`.
+
+```ts
+import { FileRead, renderReadOutput } from "./src/tools/FileRead.ts";
+import { FileEdit } from "./src/tools/FileEdit.ts";
+import { resetFileObservation } from "./src/tools/file-core.ts";
+
+const window = await FileRead("./README.md", { offset: 1, limit: 20 });
+console.log(renderReadOutput(window));
+
+await FileEdit("./README.md", "mirror the deepseek", "mirror deepseek");
+await resetFileObservation();
+```
 
 ### Calculator
 
@@ -850,27 +899,27 @@ Run any example with:
 deno run --allow-net=127.0.0.1:11434 examples/<file>.ts
 ```
 
-| File                                 | Feature                                                             |
-| ------------------------------------ | ------------------------------------------------------------------- |
-| `examples/basic-chat.ts`             | Basic chat with thinking model                                      |
-| `examples/tool-calling.ts`           | Tool calling with callbacks                                         |
-| `examples/web-stream.ts`             | WebStreams API                                                      |
-| `examples/structured-output.ts`      | Structured outputs with JSON schema                                 |
-| `examples/pipeline-usage.ts`         | Multi-model pipeline                                                |
-| `examples/websearch-tool.ts`         | `web_search` wired into `ollamaTask`                                |
-| `examples/pipeline-tools.ts`         | 4-stage pipeline using the full tool suite                          |
-| `examples/example.ts`                | Contract-generation pipeline using all tools with `FileRead` offset |
-| `examples/mcp-tools.ts`              | `ollamaTask` + local MCP server (stdio) via `.useMCP()`             |
-| `examples/mcp-remote.ts`             | Remote MCP client (Exa) with `MCPBridge.connect()`                  |
-| `examples/mcp-pipeline.ts`           | `ollamaPipeline` with `mcpServers` per stage                        |
-| `examples/mcp-server.ts`             | Standalone MCP server exposing `src/tools/` over stdio              |
-| `examples/news-digest.ts`            | 8-stage news pipeline (Exa remote MCP) with a featured article      |
-| `examples/deep-research-academic.ts` | 7-stage academic deep-research pipeline with adaptive retrieval     |
-| `examples/semantic-memory.ts`        | Semantic routing + RAG via memories                                 |
-| `examples/embedding-store.ts`        | Vector store demo via memories                                      |
-| `examples/rag-task.ts`               | Passive RAG with `.rag()` builder                                   |
-| `examples/rag-tool.ts`               | Agentic RAG with `RAGSearchTool` tool                               |
-| `examples/rag-pipeline.ts`           | RAG with `.ragStage()` pipeline stage                               |
+| File                                 | Feature                                                                                 |
+| ------------------------------------ | --------------------------------------------------------------------------------------- |
+| `examples/basic-chat.ts`             | Basic chat with thinking model                                                          |
+| `examples/tool-calling.ts`           | Tool calling with callbacks                                                             |
+| `examples/web-stream.ts`             | WebStreams API                                                                          |
+| `examples/structured-output.ts`      | Structured outputs with JSON schema                                                     |
+| `examples/pipeline-usage.ts`         | Multi-model pipeline                                                                    |
+| `examples/websearch-tool.ts`         | `web_search` wired into `ollamaTask`                                                    |
+| `examples/pipeline-tools.ts`         | 4-stage pipeline using the full tool suite                                              |
+| `examples/example.ts`                | Contract-generation pipeline using all tools with line-window `file_read` + `file_edit` |
+| `examples/mcp-tools.ts`              | `ollamaTask` + local MCP server (stdio) via `.useMCP()`                                 |
+| `examples/mcp-remote.ts`             | Remote MCP client (Exa) with `MCPBridge.connect()`                                      |
+| `examples/mcp-pipeline.ts`           | `ollamaPipeline` with `mcpServers` per stage                                            |
+| `examples/mcp-server.ts`             | Standalone MCP server exposing `src/tools/` over stdio                                  |
+| `examples/news-digest.ts`            | 8-stage news pipeline (Exa remote MCP) with a featured article                          |
+| `examples/deep-research-academic.ts` | 7-stage academic deep-research pipeline with adaptive retrieval                         |
+| `examples/semantic-memory.ts`        | Semantic routing + RAG via memories                                                     |
+| `examples/embedding-store.ts`        | Vector store demo via memories                                                          |
+| `examples/rag-task.ts`               | Passive RAG with `.rag()` builder                                                       |
+| `examples/rag-tool.ts`               | Agentic RAG with `RAGSearchTool` tool                                                   |
+| `examples/rag-pipeline.ts`           | RAG with `.ragStage()` pipeline stage                                                   |
 
 The `examples/pipeline-tools.ts` example needs permission flags beyond the
 Ollama host because it touches network, filesystem, environment and a partial

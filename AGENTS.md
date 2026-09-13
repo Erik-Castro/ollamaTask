@@ -22,10 +22,11 @@ Deno 2.x TypeScript library wrapping the Ollama streaming chat API. No
 - `src/ragIntegration.ts` — RAG integration types (`RAGConfig`), helpers
   (`searchContext`, `formatContext`, `createRAGTool`).
 - `src/tools/` — zero-dependency agent tool suite (Now, Calculator, ListDir,
-  FileRead, FileWrite, CodeSearch, Which, RunCommand, WebSearch, WebFetch,
-  StateStore, RAGSearch + html/net helpers). Single-file modules returning
-  serializable structured results that map onto `ToolDefinition`/`ToolHandler`
-  pairs.
+  FileRead, FileWrite, FileEdit, CodeSearch, Which, RunCommand, WebSearch,
+  WebFetch, StateStore, RAGSearch + html/net helpers). Shared file-tool core
+  lives in `src/tools/file-core.ts` (`FsError`, observed-state, atomic write,
+  line windowing). Single-file modules returning serializable structured results
+  that map onto `ToolDefinition`/`ToolHandler` pairs.
 - `src/memories/` — RAG library (encrypted SQLite, vector KNN search, semantic
   chunking, multi-provider support). Imported directly from `src/` files.
 - `src/mcp/` — MCP support: `MCPBridge` (client) bridges external MCP servers
@@ -73,6 +74,12 @@ deno install --allow-scripts='npm:better-sqlite3-multiple-ciphers' --entrypoint 
 - `deno.lock` and `node_modules/` are gitignored — they regenerate locally.
   `deno.lock` regenerates on first run; `node_modules/` needs the `deno install`
   above (or will be created lazily wherever local addons are needed).
+- File tools enforce a read-before-write policy: `FileWrite`/`FileEdit` require
+  a prior `FileRead` of the path in the same process (version-guarded,
+  `FS_NOT_OBSERVED`/`FS_STALE_VERSION`). The observation map is module-global —
+  call `resetFileObservation()` in long-running servers (already done in
+  `buildServer()`) and use `FileWriteUnconditional`/`FileEditUnconditional` to
+  skip the guard.
 - `data/` is `.gitignore`d local runtime data; `StateStore` persists to
   `data/state.json` by default and `CodeSearch` excludes `data/`.
 - Formatter/linting are stock `deno fmt`/`deno lint` with no config overrides —

@@ -59,18 +59,23 @@ const tools: ToolDefinition[] = [
   }),
   tool(
     "file_read",
-    "Read a text file from a byte offset ({ path, offset, content, truncated }).",
+    "Read a text file as a line window ({ path, offset, lines[], totalLines, truncated }).",
     {
       path: { type: "string" },
-      maxChars: { type: "integer" },
-      offset: { type: "integer" },
+      offset: { type: "integer", description: "starting line (1-based)" },
+      limit: { type: "integer", description: "max lines" },
     },
     ["path"],
   ),
-  tool("file_write", "Create/overwrite a text file ({ path, bytesWritten }).", {
-    path: { type: "string" },
-    content: { type: "string" },
-  }, ["path", "content"]),
+  tool(
+    "file_write",
+    "Create/overwrite a text file atomically ({ path, operation, before, after, bytesWritten }).",
+    {
+      path: { type: "string" },
+      content: { type: "string" },
+    },
+    ["path", "content"],
+  ),
   tool(
     "code_search",
     "Regex search over the codebase ({ backend, matches: file:line:snippet }).",
@@ -123,8 +128,8 @@ const handlers: ToolHandler[] = [
     name: "file_read",
     execute: (a: ToolArgs) =>
       FileRead(str(a.path), {
-        maxChars: num(a.maxChars),
-        offset: num(a.offset),
+        offset: num(a.offset, 1),
+        limit: num(a.limit, 2000),
       }),
   },
   {

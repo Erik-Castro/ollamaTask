@@ -1,4 +1,4 @@
-import { RAG } from "./memories/rag.ts";
+import type { RAG } from "./memories/rag.ts";
 import { type ExecutionResult, ollamaTask } from "./ollamaTask.ts";
 
 export interface CacheOptions {

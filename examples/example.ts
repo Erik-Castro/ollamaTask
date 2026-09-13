@@ -16,6 +16,7 @@ import { Calculator } from "../src/tools/Calculator.ts";
 import { ListDir } from "../src/tools/ListDir.ts";
 import { FileRead } from "../src/tools/FileRead.ts";
 import { FileWrite } from "../src/tools/FileWrite.ts";
+import { FileEdit } from "../src/tools/FileEdit.ts";
 import { CodeSearch } from "../src/tools/CodeSearch.ts";
 import { Which } from "../src/tools/Which.ts";
 import { RunCommand } from "../src/tools/RunCommand.ts";
@@ -61,15 +62,36 @@ const ALL_TOOLS: ToolDefinition[] = [
   tool("list_dir", "Lista entradas de um diretório.", {
     path: { type: "string" },
   }),
-  tool("file_read", "Lê arquivo de texto (offset em bytes + maxChars).", {
-    path: { type: "string" },
-    maxChars: { type: "integer" },
-    offset: { type: "integer" },
-  }, ["path"]),
-  tool("file_write", "Cria/sobrescreve arquivo de texto.", {
-    path: { type: "string" },
-    content: { type: "string" },
-  }, ["path", "content"]),
+  tool(
+    "file_read",
+    "Lê arquivo de texto por janela de linhas (offset 1-based + limit; caps 2000 linhas / 2000 chars / 50 KiB). Leia antes de escrever/editar.",
+    {
+      path: { type: "string" },
+      offset: { type: "integer" },
+      limit: { type: "integer" },
+    },
+    ["path"],
+  ),
+  tool(
+    "file_write",
+    "Cria/sobrescreve arquivo (atômico; exige leitura prévia).",
+    {
+      path: { type: "string" },
+      content: { type: "string" },
+    },
+    ["path", "content"],
+  ),
+  tool(
+    "file_edit",
+    "Edição literal (old_string → new_string, match único) em arquivo; exige leitura prévia.",
+    {
+      path: { type: "string" },
+      old_string: { type: "string" },
+      new_string: { type: "string" },
+      replace_all: { type: "boolean" },
+    },
+    ["path", "old_string", "new_string"],
+  ),
   tool("code_search", "Busca regex no código.", {
     pattern: { type: "string" },
     include: { type: "string" },
@@ -114,13 +136,20 @@ const handlers: ToolHandler[] = [
     name: "file_read",
     execute: (a) =>
       FileRead(str(a.path), {
-        maxChars: num(a.maxChars) ?? 2000,
-        offset: num(a.offset) ?? 0,
+        offset: num(a.offset, 1),
+        limit: num(a.limit, 2000),
       }),
   },
   {
     name: "file_write",
     execute: (a) => FileWrite(str(a.path), str(a.content)),
+  },
+  {
+    name: "file_edit",
+    execute: (a) =>
+      FileEdit(str(a.path), str(a.old_string), str(a.new_string), {
+        replaceAll: a.replace_all === true,
+      }),
   },
   {
     name: "code_search",
@@ -283,7 +312,7 @@ Responda só o JSON dos valores.`,
 1) state_get contract_meta, contract_values, research_notes
 2) Monte o contrato completo (título, partes, objeto, valores, prazo, obrigações, rescisão, foro, data).
 3) file_write path="${OUT}" content=<markdown completo>
-4) file_read path="${OUT}" maxChars=500 para conferir
+4) file_read path="${OUT}" limit=20 para conferir
 5) code_search pattern="CONTRATO" include="md" limit=5 (opcional, no workspace)
 6) state_set key="contract_body" value=<primeiros 500 chars ou path>
 Responda JSON {path, bytesHint, ok:true}.`,
@@ -319,7 +348,7 @@ Responda JSON {path, bytesHint, ok:true}.`,
     system: `Finalize.
 1) state_delete key="tmp_scratch"
 2) state_list
-3) file_read path="${OUT}" maxChars=300
+3) file_read path="${OUT}" limit=30
 Responda JSON {cleaned:true, keysRestantes, previewOk:true/false}.`,
     transform: (prev) =>
       `Stage anterior:\n${prev.content}\n\nLimpe tmp_scratch e confirme o arquivo.`,
@@ -349,6 +378,7 @@ const REQUIRED_TOOLS = [
   "list_dir",
   "file_read",
   "file_write",
+  "file_edit",
   "code_search",
   "which",
   "run_command",
