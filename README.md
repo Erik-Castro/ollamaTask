@@ -2,11 +2,16 @@
 
 A fluent, type-safe TypeScript client for [Ollama](https://ollama.com) that
 wraps the streaming chat API with support for **thinking models**, **tool
-calling**, **structured outputs**, and **WebStreams** — all built on the
+calling**, **structured outputs**, and **WebStreams** — all built on a ReAct
+engine core (`src/engine/`) and the
 [ollama-js](https://github.com/ollama/ollama-js) SDK.
 
 ## Features
 
+- **ReAct engine core** — `ollamaTask` is a facade over a ReAct loop
+  (`src/engine/mod.ts`): multimodal `runParts()`, seeded `initialMessages`,
+  native Ollama `modelParams`, structured `format`, HITL approvals, and context
+  pruning via `createLLMSummarizer`
 - **Fluent builder API** — chain `.system()`, `.user()`, `.tools()`,
   `.format()`, etc.
 - **Thinking model support** — parses `<think>` tags and `message.thinking`
@@ -313,6 +318,50 @@ const result = await new ollamaTask("llava")
   })
   .execute();
 ```
+
+### ReAct Engine (`src/engine/`)
+
+`ollamaTask` is a facade over the ReAct engine (see `src/engine/mod.ts`). If you
+need the loop directly — multimodal input, seeded history, native Ollama params,
+or a custom client — use `ReAct`.
+
+```ts
+import { createClient, defaultResponsesCall, ReAct } from "./src/engine/mod.ts";
+
+const model = "qwen3.5:2b";
+const agent = new ReAct(
+  { model, system_prompt: "You are a helpful assistant.", maxRounds: 4 },
+  {
+    // Default: talks to the local Ollama over the OpenAI-compatible API.
+    responses: defaultResponsesCall(createClient({
+      baseURL: "http://127.0.0.1:11434/v1",
+      apiKey: "ollama",
+      maxRetries: 2,
+    })),
+    // Seeded history for the first round (model or user turns).
+    initialMessages: [
+      { role: "system", content: [{ type: "input_text", text: "Seed." }] },
+    ],
+    // Extra body passthrough for Ollama-native params.
+    modelParams: { num_ctx: 8192, keep_alive: "5m" },
+    // Structured output (JSON).
+    format: "json",
+  },
+);
+
+// Multimodal: the first user turn carries text + images via runParts().
+for await (
+  const event of agent.runParts([
+    { type: "input_text", text: "Describe this image in one sentence." },
+    { type: "input_image", image_url: "data:image/png;base64,..." },
+  ])
+) {
+  if (event.type === "content") console.log(event.token);
+}
+```
+
+Extras: `defaultResponsesCall` also carries `format` and `modelParams` into
+every round body (replaced by `client.responses.create` `extra_body`).
 
 ### WebStreams
 

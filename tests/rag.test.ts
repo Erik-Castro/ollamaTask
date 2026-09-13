@@ -2,8 +2,12 @@ import { RAG } from "../src/memories/rag.ts";
 import { OpenAIProvider } from "../src/memories/providers/openai.ts";
 import { assert, assertEquals } from "@std/assert";
 
+const nativeSqliteUnavailable = Deno.build.os === "android" &&
+  Deno.env.get("TERMUX_VERSION") !== undefined;
+
 Deno.test({
   name: "RAG pipeline with ollama provider",
+  ignore: nativeSqliteUnavailable,
   permissions: {
     net: true,
     read: true,
@@ -64,6 +68,7 @@ A extensão sqlite-vector realiza busca KNN com distância cosine. A função ve
 
 Deno.test({
   name: "RAG pipeline with openai provider",
+  ignore: nativeSqliteUnavailable,
   permissions: {
     net: true,
     read: true,

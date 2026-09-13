@@ -1,6 +1,7 @@
 .atl/
 .codegraph/
 deno.lock
+node_modules/
 data/
 *.db
 .key

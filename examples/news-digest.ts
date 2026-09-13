@@ -41,12 +41,11 @@ import { Now } from "../src/tools/Now.ts";
 import { FileRead } from "../src/tools/FileRead.ts";
 import { FileWrite } from "../src/tools/FileWrite.ts";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const zodFormat = <T extends z.ZodType>(schema: T) =>
-  zodToJsonSchema(schema, { target: "openApi3" }) as Record<string, unknown>;
+  z.toJSONSchema(schema) as Record<string, unknown>;
 
 const str = (v: unknown, fb = ""): string =>
   v === undefined || v === null ? fb : String(v);

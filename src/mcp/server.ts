@@ -23,7 +23,7 @@ const CallToolRequestSchema = z.object({
   method: z.literal("tools/call"),
   params: z.object({
     name: z.string(),
-    arguments: z.record(z.unknown()).optional(),
+    arguments: z.record(z.string(), z.unknown()).optional(),
   }),
 });
 
@@ -95,6 +95,8 @@ class DenoStdioServerTransport implements DenoTransport {
     };
 
     readLoop();
+
+    return Promise.resolve();
   }
 
   async send(message: unknown): Promise<void> {
@@ -103,8 +105,9 @@ class DenoStdioServerTransport implements DenoTransport {
     await Deno.stdout.write(encoded);
   }
 
-  close(): void {
+  close(): Promise<void> {
     this.onclose?.();
+    return Promise.resolve();
   }
 
   [Symbol.dispose](): void {

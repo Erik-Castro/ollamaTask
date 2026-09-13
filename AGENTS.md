@@ -9,8 +9,16 @@ Deno 2.x TypeScript library wrapping the Ollama streaming chat API. No
 
 ## Layout & Entrypoints
 
-- `src/ollamaTask.ts` — main fluent client (`ollamaTask`).
-  `src/ollamaPipeline.ts` — multi-stage pipeline.
+- `src/engine/` — the ReAct engine core, copied and extended from a sibling
+  project. Single barrel (`src/engine/mod.ts`) exporting `ReAct`,
+  `ResponsesCall`, `defaultResponsesCall`, `createClient`, `ToolRegistry`,
+  events and config. Multimodal `runParts()`, `initialMessages`, `modelParams`
+  and `format` extensions live here.
+- `src/ollamaTask.ts` — main fluent client (`ollamaTask`). It is now a **facade
+  over the engine's `ReAct` loop**: `execute()` translates `AgentEvent` →
+  `StreamEvent`. Public API and types are preserved.
+- `src/ollamaPipeline.ts` — multi-stage pipeline (state preserved on each stage
+  via `transform`).
 - `src/ragIntegration.ts` — RAG integration types (`RAGConfig`), helpers
   (`searchContext`, `formatContext`, `createRAGTool`).
 - `src/tools/` — zero-dependency agent tool suite (Now, Calculator, ListDir,
@@ -33,34 +41,27 @@ Deno 2.x TypeScript library wrapping the Ollama streaming chat API. No
 ```bash
 deno task dev     # watch examples/basic-chat.ts
 deno task check   # deno lint && deno fmt --check — run before finishing work
-deno task test    # deno test --allow-ffi --allow-net --allow-read --allow-write --allow-env --allow-sys
+deno task test    # offline suite: engine + existing tests, excludes tests/integration
+deno task test:int  # E2E against a running Ollama (tests/integration/)
 ```
 
-Examples require a running Ollama on `http://127.0.0.1:11434`:
+`deno.json` uses `"nodeModulesDir": "auto"` because
+`better-sqlite3-multiple-ciphers` ships a Node-API addon. On first run after a
+clean checkout, install so the addon is compiled/linked:
 
 ```bash
-deno run --allow-net=127.0.0.1:11434 examples/<file>.ts
+deno install --allow-scripts='npm:better-sqlite3-multiple-ciphers' --entrypoint src/memories/database.ts
 ```
 
-Permission flags vary per example: most need only the scoped net flag;
-`examples/pipeline-tools.ts` needs broad flags
-(`--allow-net --allow-env
---allow-read --allow-write --allow-run`);
-`examples/mcp-remote.ts` needs plain `--allow-net` because it reaches
-`https://mcp.exa.ai`.
+## Platform notes (Termux/Android)
 
-## Current Broken State (verify before relying)
-
-As of this writing:
-
-- `deno task test` fails type-check: test files import `@std/assert`, which is
-  missing from `deno.json` imports (fix would be `deno add jsr:@std/assert`),
-  and `src/embeddings/store_test.ts` has strict-null errors.
-- `deno task check` fails with 3 pre-existing lint errors and ~12 unformatted
-  files. If your diff didn't touch them, don't chase them all — just don't make
-  them worse.
-
-If both pass when you read this, delete this section.
+- `better-sqlite3-multiple-ciphers` (native addon) and `sqlite-vector` are
+  unsupported on Termux/Android. `tests/store.test.ts` and `tests/rag.test.ts`
+  detect the platform (`Deno.build.os === "android"` + `$TERMUX_VERSION`) and
+  skip those tests; they report as **ignored**, so the offline suite stays
+  green. On desktop Linux they run normally.
+- The native addon works on Termux only when `node_modules/` exists with a
+  locally compiled binary; do not delete `node_modules/` on this platform.
 
 ## Gotchas
 
@@ -69,8 +70,13 @@ If both pass when you read this, delete this section.
   (`new
   ollama.Ollama({ host })`) — see README "Running with a Different
   Host".
-- `deno.lock` is gitignored — it regenerates locally on first run.
+- `deno.lock` and `node_modules/` are gitignored — they regenerate locally.
+  `deno.lock` regenerates on first run; `node_modules/` needs the `deno install`
+  above (or will be created lazily wherever local addons are needed).
 - `data/` is `.gitignore`d local runtime data; `StateStore` persists to
   `data/state.json` by default and `CodeSearch` excludes `data/`.
 - Formatter/linting are stock `deno fmt`/`deno lint` with no config overrides —
   run `deno fmt` on touched files instead of hand-formatting.
+- The Deno CLI resolves `deno.json` relative to the entrypoint module: scripts
+  run from outside the repo (e.g. `deno run /tmp/foo.ts`) lose the import map
+  and fail with "import not a dependency". Keep smoke scripts inside the repo.

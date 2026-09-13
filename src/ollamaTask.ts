@@ -1,10 +1,23 @@
-import ollama, { type Message, type ToolCall } from "ollama";
+import type { Message, ToolCall } from "ollama";
+import type { Responses } from "openai/resources/responses";
 import { MCPBridge, type MCPServerConfig } from "./mcp/client.ts";
 import {
   createRAGTool,
   type RAGConfig,
   searchContext,
 } from "./ragIntegration.ts";
+import {
+  type AgentEvent,
+  createClient,
+  defaultResponsesCall,
+  loadRuntimeConfig,
+  type PromptPart,
+  ReAct,
+  type TAgent,
+  type TExecutionResult,
+  type ThinkingLevel,
+  type Tool,
+} from "./engine/mod.ts";
 
 export interface ExecutionResult {
   content: string;
@@ -59,6 +72,143 @@ export type StreamEvent =
 
 export type Thinking = true | "low" | "medium" | "high" | undefined;
 
+const DEFAULT_RAG_PROMPT =
+  "Você é um assistente que responde usando EXCLUSIVAMENTE os trechos de " +
+  "contexto fornecidos. Cite as fontes usadas no formato [1], [2], etc. Se a " +
+  "resposta não estiver no contexto, diga que não sabe.";
+
+function mapThinking(thinking: Thinking): ThinkingLevel | undefined {
+  switch (thinking) {
+    case "low":
+      return "low";
+    case "medium":
+      return "medium";
+    case "high":
+      return "high";
+    default:
+      // `undefined` (default do provider) e `true` (deixa o provider decidir).
+      return undefined;
+  }
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function guessMime(path: string): string {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".bmp")) return "image/bmp";
+  return "image/png";
+}
+
+async function toDataURI(image: Uint8Array | string): Promise<string> {
+  if (image instanceof Uint8Array) {
+    return `data:image/png;base64,${bytesToBase64(image)}`;
+  }
+  if (image.startsWith("data:") || /^https?:\/\//.test(image)) {
+    return image;
+  }
+  const bytes = await Deno.readFile(image);
+  return `data:${guessMime(image)};base64,${bytesToBase64(bytes)}`;
+}
+
+/** Converte as imagens de uma `Message` do ollama para `input_image` parts. */
+async function toImageParts(
+  images: (Uint8Array | string)[] | undefined,
+): Promise<PromptPart[]> {
+  if (!images) return [];
+  const parts: PromptPart[] = [];
+  for (const image of images) {
+    parts.push({
+      type: "input_image",
+      image_url: await toDataURI(image),
+    });
+  }
+  return parts;
+}
+
+/** Converte uma `Message` do ollama para itens de input do Responses API. */
+async function toResponseInputItems(
+  msg: Message,
+): Promise<Responses.ResponseInputItem[]> {
+  switch (msg.role) {
+    case "system":
+      return [{
+        role: "system",
+        content: [{ type: "input_text", text: msg.content }],
+      }];
+    case "user": {
+      const content: Responses.ResponseInputContent[] = [
+        { type: "input_text", text: msg.content },
+      ];
+      for (const image of msg.images ?? []) {
+        content.push({
+          type: "input_image",
+          image_url: await toDataURI(image),
+        } as Responses.ResponseInputContent);
+      }
+      return [{ role: "user", content }];
+    }
+    case "assistant": {
+      if (msg.tool_calls?.length) {
+        const items: Responses.ResponseInputItem[] = [];
+        if (msg.content) {
+          items.push({
+            role: "assistant",
+            content: [{ type: "output_text", text: msg.content }],
+          } as Responses.ResponseInputItem);
+        }
+        for (const tc of msg.tool_calls) {
+          items.push({
+            type: "function_call",
+            call_id: `call_seed_${tc.function.name}`,
+            name: tc.function.name,
+            arguments: typeof tc.function.arguments === "string"
+              ? tc.function.arguments
+              : JSON.stringify(tc.function.arguments),
+          } as Responses.ResponseInputItem);
+        }
+        return items;
+      }
+      return [{
+        role: "assistant",
+        content: [{ type: "output_text", text: msg.content }],
+      }] as Responses.ResponseInputItem[];
+    }
+    case "tool":
+      return [{
+        type: "function_call_output",
+        call_id: `call_seed_${msg.tool_name ?? "tool"}`,
+        output: msg.content,
+      }] as Responses.ResponseInputItem[];
+    default:
+      return [];
+  }
+}
+
+/** Converte `args` (JSON string do engine) para objeto `ToolArgs`. */
+function parseArgs(json: string): ToolArgs {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (
+      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+    ) {
+      return parsed as ToolArgs;
+    }
+  } catch {
+    // fallback abaixo
+  }
+  return {};
+}
+
 export class ollamaTask {
   private _messages: Message[] = [];
   private _model: string;
@@ -98,7 +248,7 @@ export class ollamaTask {
     options?: { images?: (Uint8Array | string)[] },
   ): this {
     const msg: Message = { role: "user", content };
-    if (options?.images) msg.images = options.images;
+    if (options?.images) msg.images = options.images as Message["images"];
     this._messages.push(msg);
     return this;
   }
@@ -214,172 +364,189 @@ export class ollamaTask {
   }
 
   private async *_streamEvents(): AsyncGenerator<StreamEvent> {
+    // ---- Seed da execução: uma chamada única ao motor ReAct --------------
+    const lastUserIdx = this._messages.map((m) => m.role).lastIndexOf("user");
+    const promptMsg = lastUserIdx >= 0
+      ? this._messages[lastUserIdx]
+      : undefined;
+    const seedMessages = this._messages.filter((_, i) => i !== lastUserIdx);
+
+    const systemPrompts = seedMessages
+      .filter((m) => m.role === "system")
+      .map((m) => m.content)
+      .filter((c) => c.trim())
+      .join("\n\n");
+
+    let systemPrompt = systemPrompts;
     if (this._ragConfig) {
-      const lastUserMsg = [...this._messages]
-        .reverse()
-        .find((m) => m.role === "user");
-      if (lastUserMsg) {
-        const context = await searchContext(
-          this._ragConfig.rag,
-          lastUserMsg.content,
-          { k: this._ragConfig.k },
-        );
-        if (context) {
-          const ragPrompt = this._ragConfig.systemPrompt ??
-            "Você é um assistente que responde usando EXCLUSIVAMENTE os trechos de contexto fornecidos. Cite as fontes usadas no formato [1], [2], etc. Se a resposta não estiver no contexto, diga que não sabe.";
-          const systemIdx = this._messages.findIndex((m) =>
-            m.role === "system"
-          );
-          const contextMsg =
-            `Contexto relevante:\n${context}\n\n---\n\n${ragPrompt}`;
-          if (systemIdx >= 0) {
-            this._messages[systemIdx] = {
-              role: "system",
-              content: contextMsg,
-            };
-          } else {
-            this._messages.unshift({ role: "system", content: contextMsg });
-          }
-        }
+      const query = promptMsg?.content ?? "";
+      const context = await searchContext(
+        this._ragConfig.rag,
+        query,
+        { k: this._ragConfig.k },
+      );
+      if (context) {
+        const ragPrompt = this._ragConfig.systemPrompt ?? DEFAULT_RAG_PROMPT;
+        const ragBlock =
+          `Contexto relevante:\n${context}\n\n---\n\n${ragPrompt}`;
+        systemPrompt = systemPrompts
+          ? `${ragBlock}\n\n${systemPrompts}`
+          : ragBlock;
       }
     }
 
-    for (let i = 0; i < this._maxIterations; i++) {
-      const response = await ollama.chat({
-        model: this._model,
-        messages: this._messages,
-        tools: this._tools,
-        format: this._format,
-        think: this._resoaning,
-        stream: true,
-        keep_alive: this._keepAlive,
-        options: {
-          ...this._options,
-          ...(this._numCtx !== undefined && { num_ctx: this._numCtx }),
-          ...(this._temperature !== undefined && {
-            temperature: this._temperature,
-          }),
-          ...(this._stop !== undefined && { stop: this._stop }),
-          ...(this._numPredict !== undefined && {
-            num_predict: this._numPredict,
-          }),
-          ...(this._seed !== undefined && { seed: this._seed }),
-        },
-      });
+    const initialMessages: Responses.ResponseInputItem[] = [];
+    for (const msg of seedMessages) {
+      if (msg.role === "system") continue; // system vai em `instructions`
+      initialMessages.push(...await toResponseInputItems(msg));
+    }
 
-      let iterationContent = "";
-      let iterationToolCalls: ToolCall[] = [];
-      let buf = "";
-      let inThink = false;
-      const onThinking = this._onThinking;
-      const onContent = this._onContent;
+    const agentConfig: TAgent = {
+      model: this._model,
+      system_prompt: systemPrompt,
+      maxRounds: this._maxIterations,
+      thinking: mapThinking(this._resoaning),
+    };
 
-      const flush = function* (
-        type: "thinking" | "content",
-        text: string,
-      ): Generator<StreamEvent, void, void> {
-        if (!text) return;
-        if (type === "thinking") {
-          onThinking?.(text);
-          yield { type: "thinking", data: text };
-        } else {
-          iterationContent += text;
-          onContent?.(text);
-          yield { type: "content", data: text };
-        }
-      };
+    const modelParams: Record<string, unknown> = {
+      ...this._options,
+      ...(this._numCtx !== undefined && { num_ctx: this._numCtx }),
+      ...(this._temperature !== undefined &&
+        { temperature: this._temperature }),
+      ...(this._keepAlive !== undefined && { keep_alive: this._keepAlive }),
+      ...(this._stop !== undefined && { stop: this._stop }),
+      ...(this._numPredict !== undefined && { num_predict: this._numPredict }),
+      ...(this._seed !== undefined && { seed: this._seed }),
+    };
 
-      for await (const chunk of response) {
-        const { thinking, content, tool_calls } = chunk.message;
+    const options = {
+      initialMessages,
+      format: this._format,
+      modelParams,
+      responses: defaultResponsesCall(createClient(loadRuntimeConfig())),
+    };
 
-        if (thinking) {
-          this._onThinking?.(thinking);
-          yield { type: "thinking", data: thinking };
-        } else if (content) {
-          buf += content;
+    const agent = new ReAct(agentConfig, options);
 
-          const LT = String.fromCharCode(60);
-          const GT = String.fromCharCode(62);
-          const THINK_OPEN = LT + "think" + GT;
-          const THINK_CLOSE = LT + "/think" + GT;
-          const isPartial = (s: string) =>
-            !!s &&
-            (THINK_OPEN.startsWith(s) || THINK_CLOSE.startsWith(s));
+    // ---- Adaptador ToolDefinition/ToolHandler → engine.Tool -------------
+    // `lastRawResults` preserva o valor estruturado (unknown) do handler para
+    // o `StreamEvent.tool_result` — em vez do JSON string que o motor usa.
+    const lastRawResults = new Map<string, unknown>();
+    const toEngineTool = (
+      def: ToolDefinition,
+      handler?: ToolHandler,
+    ): Tool => ({
+      name: def.function.name,
+      description: def.function.description,
+      parametersJsonSchema: def.function.parameters,
+      execute: async (params) => {
+        const raw: unknown = handler
+          ? await handler.execute(params)
+          : { error: `No handler for tool: ${def.function.name}` };
+        lastRawResults.set(def.function.name, raw);
+        return typeof raw === "string" ? raw : JSON.stringify(raw);
+      },
+    });
 
-          while (true) {
-            if (inThink) {
-              const closeIdx = buf.indexOf(THINK_CLOSE);
-              if (closeIdx === -1) break;
-              yield* flush("thinking", buf.slice(0, closeIdx));
-              buf = buf.slice(closeIdx + THINK_CLOSE.length);
-              inThink = false;
-            } else {
-              const openIdx = buf.indexOf(THINK_OPEN);
-              if (openIdx === -1) break;
-              yield* flush("content", buf.slice(0, openIdx));
-              buf = buf.slice(openIdx + THINK_OPEN.length);
-              inThink = true;
-            }
-          }
+    for (const def of this._tools ?? []) {
+      const handler = this._handlers?.find((h) => h.name === def.function.name);
+      agent.registryTool(toEngineTool(def, handler));
+    }
 
-          let keep = buf.length;
-          for (let i = buf.length; i >= 0; i--) {
-            if (isPartial(buf.slice(i))) {
-              keep = i;
-              break;
-            }
-          }
-          yield* flush(inThink ? "thinking" : "content", buf.slice(0, keep));
-          buf = buf.slice(keep);
-        }
+    // ---- Prompt corrente: última mensagem do usuário ---------------------
+    const imageParts = await toImageParts(promptMsg?.images);
+    const parts: PromptPart[] = imageParts.length > 0
+      ? [{ type: "input_text", text: promptMsg?.content ?? "" }, ...imageParts]
+      : [{ type: "input_text", text: promptMsg?.content ?? "" }];
+    const generator = imageParts.length > 0
+      ? agent.runParts(parts)
+      : agent.run(promptMsg?.content ?? "");
 
-        if (tool_calls?.length) iterationToolCalls = tool_calls;
+    // ---- Tradução AgentEvent → StreamEvent -------------------------------
+    const roundArgs = new Map<string, ToolArgs>();
+    let execResult: TExecutionResult | undefined;
 
-        if (chunk.done) {
+    for (;;) {
+      const { done, value } = await generator.next();
+      if (done) {
+        execResult = value as TExecutionResult;
+        break;
+      }
+      switch ((value as AgentEvent).type) {
+        case "reasoning":
+          this._onThinking?.((value as { token: string }).token);
           yield {
-            type: "done",
+            type: "thinking",
+            data: (value as { token: string }).token,
+          };
+          break;
+        case "content":
+          this._onContent?.((value as { token: string }).token);
+          yield {
+            type: "content",
+            data: (value as { token: string }).token,
+          };
+          break;
+        case "tool_call": {
+          const evt = value as { tool: string; args: string };
+          const argsObj = parseArgs(evt.args);
+          roundArgs.set(evt.tool, argsObj);
+          this._onToolCall?.(evt.tool, argsObj);
+          yield {
+            type: "tool_call",
             data: {
-              inputTokens: chunk.prompt_eval_count ?? 0,
-              outputTokens: chunk.eval_count ?? 0,
+              function: { name: evt.tool, arguments: parseArgs(evt.args) },
             },
           };
+          break;
         }
-      }
-
-      if (iterationToolCalls.length === 0) break;
-
-      this._messages.push({
-        role: "assistant",
-        content: iterationContent,
-        tool_calls: iterationToolCalls.map((tc) => ({
-          function: {
-            name: tc.function.name,
-            arguments: tc.function.arguments,
-          },
-        })),
-      });
-
-      for (const tc of iterationToolCalls) {
-        const { name, arguments: args } = tc.function;
-        this._onToolCall?.(name, args);
-        yield { type: "tool_call", data: tc };
-
-        const handler = this._handlers?.find((h) => h.name === name);
-        const result = handler
-          ? await handler.execute(args)
-          : { error: `No handler for tool: ${name}` };
-
-        const toolResult: ToolCallResult = { name, arguments: args, result };
-        this._onToolResult?.(name, args, result);
-        yield { type: "tool_result", data: toolResult };
-
-        this._messages.push({
-          role: "tool",
-          content: JSON.stringify(result),
-          tool_name: name,
-        });
+        case "tool_result": {
+          const evt = value as { tool: string; output: string };
+          const args = roundArgs.get(evt.tool) ?? {};
+          const structured = lastRawResults.get(evt.tool);
+          const result = structured ?? evt.output;
+          const toolResult: ToolCallResult = {
+            name: evt.tool,
+            arguments: args,
+            result,
+          };
+          this._onToolResult?.(evt.tool, args, result);
+          yield { type: "tool_result", data: toolResult };
+          break;
+        }
+        case "tool_denied": {
+          const evt = value as {
+            tool: string;
+            args: string;
+            reason: "user" | "timeout";
+          };
+          yield {
+            type: "tool_result",
+            data: {
+              name: evt.tool,
+              arguments: parseArgs(evt.args),
+              result: { error: "denied by user" },
+            },
+          };
+          break;
+        }
+        case "error":
+          throw (value as { error: unknown }).error;
+        case "aborted":
+          return;
+        case "reasoning.done":
+        case "content.done":
+          break;
       }
     }
+
+    yield {
+      type: "done",
+      data: {
+        inputTokens: execResult?.inputTokens ?? 0,
+        outputTokens: execResult?.outputTokens ?? 0,
+      },
+    };
   }
 
   public toReadableStream(): ReadableStream<StreamEvent> {
@@ -416,6 +583,10 @@ export class ollamaTask {
         input += event.data.inputTokens;
         output += event.data.outputTokens;
       }
+    }
+
+    if (fullContent) {
+      this._messages.push({ role: "assistant", content: fullContent });
     }
 
     if (this._ragConfig?.autoIndex && fullContent) {
