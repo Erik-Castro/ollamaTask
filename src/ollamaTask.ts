@@ -273,7 +273,7 @@ export class ollamaTask {
     return this;
   }
 
-  public reasoning(reasonig: Thinking) {
+  public reasoning(reasonig: Thinking): this {
     this._resoaning = reasonig;
     return this;
   }

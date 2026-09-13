@@ -54,6 +54,30 @@ For MCP support, also add the Model Context Protocol SDK (and `zod`, used by
 deno add npm:@modelcontextprotocol/sdk npm:zod
 ```
 
+### Public barrel (`src/mod.ts`)
+
+The library ships a single entrypoint (`./src/mod.ts`), named
+`@erik-castro/ollamatask` once published to JSR:
+
+```ts
+import {
+  createClient,
+  type ExecutionResult,
+  ollamaPipeline,
+  ollamaTask,
+  ReAct,
+  type StageConfig,
+} from "./src/mod.ts";
+```
+
+Advanced modules stay out of the barrel on purpose; import them by path when you
+vendor `src/` directly:
+
+- `src/tools/` — zero-dependency agent tool suite
+- `src/memories/` — encrypted SQLite + vector KNN semantic memory
+- `src/mcp/` — the MCP `MCPBridge` client and the stdio MCP server (the config
+  types (`MCPServerConfig`, …) _are_ re-exported by the barrel)
+
 ## Quick Start
 
 ```ts

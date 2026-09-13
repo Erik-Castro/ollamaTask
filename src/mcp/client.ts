@@ -20,7 +20,10 @@ export interface RemoteServerConfig {
 
 export type MCPServerConfig = StdioServerConfig | RemoteServerConfig;
 
-function isRemote(config: MCPServerConfig): config is RemoteServerConfig {
+/** Retorna `true` quando a config aponta para um servidor remoto (HTTP). */
+export function isRemote(
+  config: MCPServerConfig,
+): config is RemoteServerConfig {
   return config.type === "remote" || "url" in config;
 }
 
@@ -240,7 +243,8 @@ function mcpTypeToOllama(type: string): string {
   }
 }
 
-function convertSchema(
+/** Converte um JSON Schema do MCP em um `ToolDefinition` da fachada. */
+export function convertSchema(
   name: string,
   description: string,
   inputSchema: Record<string, unknown>,
@@ -284,6 +288,36 @@ function convertSchema(
       },
     },
   };
+}
+
+/**
+ * Extrai o conteúdo estruturado de um `CallToolResult` do MCP.
+ *
+ * Texto que parece JSON é parseado; texto puro é devolvido como string. Sem
+ * conteúdo de texto, entrega o `fallback` (o próprio resultado original).
+ */
+export function parseToolResultContent(
+  content: unknown,
+  fallback: unknown = content,
+): unknown {
+  if (!Array.isArray(content) || content.length === 0) return fallback;
+
+  const textContent = content.find(
+    (c): c is { type?: string; text?: string } =>
+      typeof c === "object" &&
+      c !== null &&
+      (c as { type?: unknown }).type === "text",
+  );
+
+  if (textContent?.text) {
+    try {
+      return JSON.parse(textContent.text);
+    } catch {
+      return textContent.text;
+    }
+  }
+
+  return fallback;
 }
 
 // ── MCPBridge ─────────────────────────────────────────────────────────────────
@@ -333,21 +367,7 @@ export class MCPBridge {
           arguments: args as Record<string, unknown>,
         });
 
-        const content = result.content as Array<
-          { type: string; text?: string }
-        >;
-        if (!content?.length) return result;
-
-        const textContent = content.find((c) => c.type === "text");
-        if (textContent?.text) {
-          try {
-            return JSON.parse(textContent.text);
-          } catch {
-            return textContent.text;
-          }
-        }
-
-        return result;
+        return parseToolResultContent(result.content, result);
       },
     }));
   }

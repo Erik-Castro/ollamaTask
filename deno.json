@@ -1,5 +1,13 @@
 {
+  "name": "@erik-castro/ollamatask",
   "version": "1.0.0",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/mod.ts"
+  },
+  "publish": {
+    "exclude": ["examples/", "tests/"]
+  },
   "tasks": {
     "dev": "deno run --watch examples/basic-chat.ts",
     "news": "deno run --allow-net --allow-read --allow-write --allow-env examples/news-digest.ts",
@@ -7,7 +15,7 @@
     "fmt": "deno fmt --check",
     "check": "deno lint && deno fmt --check",
     "test": "deno test --allow-ffi --allow-net --allow-read --allow-write --allow-env --allow-sys src/ tests/store.test.ts tests/chunker.test.ts tests/rag.test.ts",
-    "test:int": "deno test --allow-net=localhost:11434 --allow-env tests/integration/"
+    "test:int": "deno test --allow-net=localhost:11434 --allow-env --allow-run=deno tests/integration/"
   },
   "imports": {
     "ollama": "npm:ollama@^0.6.3",
