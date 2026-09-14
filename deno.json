@@ -3,7 +3,25 @@
   "version": "1.0.0",
   "license": "MIT",
   "exports": {
-    ".": "./src/mod.ts"
+    ".": "./src/mod.ts",
+    "./tools/FileRead": "./src/tools/FileRead.ts",
+    "./tools/FileWrite": "./src/tools/FileWrite.ts",
+    "./tools/FileEdit": "./src/tools/FileEdit.ts",
+    "./tools/RunCommand": "./src/tools/RunCommand.ts",
+    "./tools/WebSearch": "./src/tools/WebSearch.ts",
+    "./tools/WebFetch": "./src/tools/WebFetch.ts",
+    "./tools/Calculator": "./src/tools/Calculator.ts",
+    "./tools/ListDir": "./src/tools/ListDir.ts",
+    "./tools/CodeSearch": "./src/tools/CodeSearch.ts",
+    "./tools/Now": "./src/tools/Now.ts",
+    "./tools/StateStore": "./src/tools/StateStore.ts",
+    "./tools/RAGSearch": "./src/tools/RAGSearch.ts",
+    "./memories/rag": "./src/memories/rag.ts",
+    "./memories/store": "./src/memories/store.ts",
+    "./ragIntegration": "./src/ragIntegration.ts",
+    "./semanticRouter": "./src/semanticRouter.ts",
+    "./cachedRun": "./src/cachedRun.ts",
+    "./ragDefaults": "./src/ragDefaults.ts"
   },
   "publish": {
     "exclude": ["examples/", "tests/"]
